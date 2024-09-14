@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+gunicorn
+dnspython
+motor
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+authlib
