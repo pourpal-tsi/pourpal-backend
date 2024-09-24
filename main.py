@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
 from fastapi import Path
 from fastapi.encoders import jsonable_encoder
+from fastapi import Query
+from typing import List, Optional
 
 from models import Item, Money, Volume
 
@@ -45,9 +47,43 @@ app = FastAPI(
 async def root(request: Request):
     return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
 
-@app.get("/items", response_class=JSONResponse)
-async def get_items(request: Request):
-    items = await request.app.mongodb['items'].find({}, {'_id': 0}).to_list(length=None)
+@app.get("/items", response_class=JSONResponse)  # Example: /items?search=X&types=X,X&countries=X,X&brands=X,X&min_price=X&max_price=X
+async def get_items(
+    request: Request,
+    search: Optional[str] = Query(None, description="Search items by title (case-insensitive, substring match)"), 
+    types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),
+    countries: Optional[str] = Query(None, description="Filter by countries of origin (comma-separated)"), 
+    brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),
+    min_price: Optional[float] = Query(None, description="Minimum price for filtering"),  
+    max_price: Optional[float] = Query(None, description="Maximum price for filtering"),
+):
+    query = {}
+
+    if search:
+        query["title"] = {"$regex": search, "$options": "i"}
+
+    if types:
+        type_list = [t.strip() for t in types.split(',')]
+        query["type_id"] = {"$in": type_list}
+
+    if countries:
+        country_list = [c.strip() for c in countries.split(',')]
+        query["origin_country_code"] = {"$in": country_list}
+
+    if brands:
+        brand_list = [b.strip() for b in brands.split(',')]
+        query["brand_id"] = {"$in": brand_list}
+
+    if min_price is not None or max_price is not None:
+        price_query = {}
+        if min_price is not None:
+            price_query["$gte"] = Decimal128(str(min_price))
+        if max_price is not None:
+            price_query["$lte"] = Decimal128(str(max_price))
+        query["price.amount"] = price_query
+
+    items = await request.app.mongodb['items'].find(query, {'_id': 0}).to_list(length=None)
+
     items = jsonable_encoder(bson_to_json(items))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
 
