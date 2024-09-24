@@ -43,16 +43,41 @@ class Volume(BaseModel):
         return Decimal128(str(v))
     
 
+class Country(BaseModel):
+    code: str
+    unicode: str
+    name: str
+    emoji: str
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class BeverageType(BaseModel):
+    type_id: str = Field(default_factory=lambda: str(uuid4()))
+    type: str
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Brand(BaseModel):
+    brand_id: str = Field(default_factory=lambda: str(uuid4()))
+    brand: str
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class Item(BaseModel):
     item_id: str = Field(default_factory=lambda: str(uuid4()))
     title: str
     image_url: str
     description: str
-    type: str
+    type_id: str
+    type_name: str
     price: Money
     volume: Volume
     alcohol_volume: Volume
     quantity: int
-    origin_country: str
-    brand: str
+    origin_country_code: str
+    origin_country_name: str
+    brand_id: str
+    brand_name: str
     
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
