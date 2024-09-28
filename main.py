@@ -16,6 +16,7 @@ from fastapi import BackgroundTasks
 from fastapi import Path
 from fastapi.encoders import jsonable_encoder
 from fastapi import Query
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
 from models import Item, Money, Volume
@@ -39,6 +40,14 @@ app = FastAPI(
     # redoc_url=None,    # Disable /redoc
     # openapi_url=None   # Disable /openapi.json
 ) 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Endpoints
