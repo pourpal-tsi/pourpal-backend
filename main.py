@@ -18,6 +18,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+from math import ceil
 
 from models import Item, Money, Volume
 
@@ -65,6 +66,8 @@ async def get_items(
     brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),
     min_price: Optional[float] = Query(None, description="Minimum price for filtering"),  
     max_price: Optional[float] = Query(None, description="Maximum price for filtering"),
+    page_size: int = Query(25, ge=1, le=100, description="Number of items per page"),
+    page_number: int = Query(1, ge=1, description="Page number"),
 ):
     query = {}
 
@@ -91,10 +94,30 @@ async def get_items(
             price_query["$lte"] = Decimal128(str(max_price))
         query["price.amount"] = price_query
 
-    items = await request.app.mongodb['items'].find(query, {'_id': 0}).to_list(length=None)
+    # Count total matching items
+    total_count = await request.app.mongodb['items'].count_documents(query)
+
+    # Calculate pagination metadata
+    total_pages = ceil(total_count / page_size)
+    skip = (page_number - 1) * page_size
+
+    # Fetch paginated items
+    items = await request.app.mongodb['items'].find(query, {'_id': 0}).skip(skip).limit(page_size).to_list(length=None)
 
     items = jsonable_encoder(bson_to_json(items))
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
+    
+    # Prepare pagination metadata
+    paging = {
+        "count": len(items),
+        "page_size": page_size,
+        "page_number": page_number,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "first_page": page_number == 1,
+        "last_page": page_number == total_pages
+    }
+
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items, "paging": paging})
 
 @app.get("/item/{item_id}", response_class=JSONResponse)
 async def get_item(request: Request, item_id: str = Path(..., title="The ID of the item to retrieve")):
