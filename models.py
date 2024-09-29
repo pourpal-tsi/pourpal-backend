@@ -65,6 +65,7 @@ class Brand(BaseModel):
 
 class Item(BaseModel):
     item_id: str = Field(default_factory=lambda: str(uuid4()))
+    sku: str
     title: str
     image_url: str
     description: str

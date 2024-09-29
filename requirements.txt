@@ -9,3 +9,7 @@ passlib[bcrypt]
 python-multipart
 authlib
 pymongo
+
+# Parsing
+httpx
+bs4

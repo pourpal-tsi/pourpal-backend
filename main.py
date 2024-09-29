@@ -21,7 +21,7 @@ from typing import List, Optional
 
 from models import Item, Money, Volume
 
-from service_funcs import bson_to_json, get_client_ip, validate_item_attrs
+from service_funcs import bson_to_json, get_client_ip, validate_item_attrs, generate_sku
 
 
 @asynccontextmanager
@@ -111,6 +111,7 @@ async def create_item(request: Request, item: dict):
     try:
         new_item = Item(
             title=item['title'],
+            sku=generate_sku(type_name=valid_type['type']),
             image_url=item['image_url'],
             description=item['description'],
             type_id=valid_type['type_id'],
@@ -141,6 +142,7 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
     try:    
         updated_item = Item(
             title=item['title'],
+            sku=item['sku'],
             image_url=item['image_url'],
             description=item['description'],
             type_id=valid_type['type_id'],
