@@ -148,7 +148,7 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
             type_id=valid_type['type_id'],
             type_name=valid_type['type'],
             price=Money(amount=Decimal128(item['price'])),
-            volume=Volume(amount=Decimal128(item['volume']), unit='l'),
+            volume=Volume(amount=Decimal128(item['volume']), unit=item['volume_unit']),
             alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']), unit='%'),
             quantity=item['quantity'],
             origin_country_code=valid_country['code'],
