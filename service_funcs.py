@@ -21,7 +21,7 @@ from random import randint
 
 def generate_sku(type_name: str) -> str:
     type_code = type_name[:3].upper()
-    random_number = randint(100000000000000, 999999999999999)
+    random_number = randint(1000000, 9999999)
     return f"{type_code}{random_number}"    
 
 def get_client_ip(request: Request) -> str | None:

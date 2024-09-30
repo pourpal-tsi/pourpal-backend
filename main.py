@@ -57,13 +57,13 @@ app.add_middleware(
 async def root(request: Request):
     return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
 
-@app.get("/items", response_class=JSONResponse)  # Example: /items?search=X&types=X,X&countries=X,X&brands=X,X&min_price=X&max_price=X
+@app.get("/items", response_class=JSONResponse)  # Example: /items?search=X&types=X,X&countries=X,X&brands=X,X&min_price=X&max_price=X&page_size=X&page_number=X
 async def get_items(
     request: Request,
     search: Optional[str] = Query(None, description="Search items by title (case-insensitive, substring match)"), 
-    types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),
-    countries: Optional[str] = Query(None, description="Filter by countries of origin (comma-separated)"), 
-    brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),
+    types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),  # type_id
+    countries: Optional[str] = Query(None, description="Filter by countries of origin (comma-separated)"),  # origin_country_code
+    brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),  # brand_id
     min_price: Optional[float] = Query(None, description="Minimum price for filtering"),  
     max_price: Optional[float] = Query(None, description="Maximum price for filtering"),
     page_size: int = Query(25, ge=1, le=100, description="Number of items per page"),
@@ -133,8 +133,8 @@ async def create_item(request: Request, item: dict):
     
     try:
         new_item = Item(
-            title=item['title'],
             sku=generate_sku(type_name=valid_type['type']),
+            title=item['title'],
             image_url=item['image_url'],
             description=item['description'],
             type_id=valid_type['type_id'],
@@ -163,9 +163,11 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
         return validation_response
 
     try:    
+        db_item = await request.app.mongodb['items'].find_one({"item_id": item_id}, {'_id': 0})
+
         updated_item = Item(
+            sku=db_item['sku'],
             title=item['title'],
-            sku=item['sku'],
             image_url=item['image_url'],
             description=item['description'],
             type_id=valid_type['type_id'],
@@ -177,7 +179,9 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
             origin_country_code=valid_country['code'],
             origin_country_name=valid_country['name'],
             brand_id=valid_brand['brand_id'],
-            brand_name=valid_brand['brand']
+            brand_name=valid_brand['brand'],
+            updated_at=datetime.now(timezone.utc),
+            added_at=db_item['added_at']
         )            
     except Exception as e:
         return JSONResponse(status_code=400, detail=str(e))
