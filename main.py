@@ -9,13 +9,11 @@ from config import MONGO_DB
 
 import uvicorn
 from bson import ObjectId
-from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException
+from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException, Query, Path
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
-from fastapi import Path
 from fastapi.encoders import jsonable_encoder
-from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from math import ceil
@@ -55,20 +53,99 @@ app.add_middleware(
 
 @app.get("/", response_class=JSONResponse)
 async def root(request: Request):
+    """
+    Root endpoint.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing a warning message.
+    """
     return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
 
-@app.get("/items", response_class=JSONResponse)  # Example: /items?search=X&types=X,X&countries=X,X&brands=X,X&min_price=X&max_price=X&page_size=X&page_number=X
+@app.get("/items", response_class=JSONResponse)
 async def get_items(
     request: Request,
-    search: Optional[str] = Query(None, description="Search items by title (case-insensitive, substring match)"), 
-    types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),  # type_id
-    countries: Optional[str] = Query(None, description="Filter by countries of origin (comma-separated)"),  # origin_country_code
-    brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),  # brand_id
-    min_price: Optional[float] = Query(None, description="Minimum price for filtering"),  
+    search: Optional[str] = Query(None, description="Search items by title (case-insensitive, substring match)"),
+    types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),
+    countries: Optional[str] = Query(None, description="Filter by countries of origin (comma-separated)"),
+    brands: Optional[str] = Query(None, description="Filter by brands (comma-separated)"),
+    min_price: Optional[float] = Query(None, description="Minimum price for filtering"),
     max_price: Optional[float] = Query(None, description="Maximum price for filtering"),
+    sort_by: Optional[str] = Query(None, description="Field to sort by (sku, title, type, brand, country, quantity)"),
+    sort_order: Optional[str] = Query("asc", description="Sort order (asc or desc)"),
     page_size: int = Query(25, ge=1, le=100, description="Number of items per page"),
     page_number: int = Query(1, ge=1, description="Page number"),
 ):
+    """
+    Retrieve a paginated list of items with optional filtering and sorting.
+
+    Args:
+        request (Request): The incoming request object.
+        search (str, optional): Search items by title (case-insensitive, substring match).
+        types (str, optional): Filter by beverage types (comma-separated).
+        countries (str, optional): Filter by countries of origin (comma-separated).
+        brands (str, optional): Filter by brands (comma-separated).
+        min_price (float, optional): Minimum price for filtering.
+        max_price (float, optional): Maximum price for filtering.
+        sort_by (str, optional): Field to sort by (sku, title, type, brand, country, quantity).
+        sort_order (str, optional): Sort order (asc or desc). Defaults to "asc".
+        page_size (int, optional): Number of items per page. Defaults to 25.
+        page_number (int, optional): Page number. Defaults to 1.
+
+    Returns:
+        JSONResponse: A JSON response containing the list of items and pagination metadata.
+
+    Example:
+        ```
+        GET /items?search=wine&types=red,white&countries=FR,IT&brands=Chateau&min_price=10&max_price=50&sort_by=price&sort_order=desc&page_size=10&page_number=1
+
+        Response:
+        {
+            "items": [
+                {
+                    "item_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "sku": "W123",
+                    "title": "Chateau Margaux",
+                    "image_url": "https://example.com/chateau-margaux.jpg",
+                    "description": "A fine red wine from Bordeaux",
+                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+                    "type_name": "red",
+                    "price": {
+                        "amount": "45.99",
+                        "currency": "€"
+                    },
+                    "volume": {
+                        "amount": "750",
+                        "unit": "ml"
+                    },
+                    "alcohol_volume": {
+                        "amount": "13.5",
+                        "unit": "%"
+                    },
+                    "quantity": 10,
+                    "origin_country_code": "FR",
+                    "origin_country_name": "France",
+                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
+                    "brand_name": "Chateau",
+                    "updated_at": "2023-04-01T12:00:00Z",
+                    "added_at": "2023-03-15T09:30:00Z"
+                },
+                // ... more items ...
+            ],
+            "paging": {
+                "count": 10,
+                "page_size": 10,
+                "page_number": 1,
+                "total_count": 50,
+                "total_pages": 5,
+                "first_page": true,
+                "last_page": false
+            }
+        }
+        ```
+    """
     query = {}
 
     if search:
@@ -94,6 +171,23 @@ async def get_items(
             price_query["$lte"] = Decimal128(str(max_price))
         query["price.amount"] = price_query
 
+    # Sorting logic
+    sort_fields = {
+        "sku": "sku",
+        "title": "title",
+        "type": "type_name",
+        "brand": "brand_name",
+        "country": "origin_country_name",
+        "quantity": "quantity"
+    }
+
+    if sort_by and sort_by in sort_fields:
+        sort_field = sort_fields[sort_by]
+        sort_direction = 1 if sort_order.lower() == "asc" else -1
+        sort_query = [(sort_field, sort_direction)]
+    else:
+        sort_query = None
+
     # Count total matching items
     total_count = await request.app.mongodb['items'].count_documents(query)
 
@@ -101,8 +195,8 @@ async def get_items(
     total_pages = ceil(total_count / page_size)
     skip = (page_number - 1) * page_size
 
-    # Fetch paginated items
-    items = await request.app.mongodb['items'].find(query, {'_id': 0}).skip(skip).limit(page_size).to_list(length=None)
+    # Fetch paginated items with sorting
+    items = await request.app.mongodb['items'].find(query, {'_id': 0}).sort(sort_query).skip(skip).limit(page_size).to_list(length=None)
 
     items = jsonable_encoder(bson_to_json(items))
     
@@ -121,12 +215,95 @@ async def get_items(
 
 @app.get("/item/{item_id}", response_class=JSONResponse)
 async def get_item(request: Request, item_id: str = Path(..., title="The ID of the item to retrieve")):
+    """
+    Retrieve a specific item by its ID.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to retrieve.
+
+    Returns:
+        JSONResponse: A JSON response containing the item details.
+
+    Example:
+        ```
+        GET /item/550e8400-e29b-41d4-a716-446655440000
+
+        Response:
+        {
+            "item": {
+                "item_id": "550e8400-e29b-41d4-a716-446655440000",
+                "sku": "W123",
+                "title": "Chateau Margaux",
+                "image_url": "https://example.com/chateau-margaux.jpg",
+                "description": "A fine red wine from Bordeaux",
+                "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+                "type_name": "red",
+                "price": {
+                    "amount": "45.99",
+                    "currency": "€"
+                },
+                "volume": {
+                    "amount": "750",
+                    "unit": "ml"
+                },
+                "alcohol_volume": {
+                    "amount": "13.5",
+                    "unit": "%"
+                },
+                "quantity": 10,
+                "origin_country_code": "FR",
+                "origin_country_name": "France",
+                "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
+                "brand_name": "Chateau",
+                "updated_at": "2023-04-01T12:00:00Z",
+                "added_at": "2023-03-15T09:30:00Z"
+            }
+        }
+        ```
+    """
     item = await request.app.mongodb['items'].find_one({"item_id": item_id}, {'_id': 0})
     item = jsonable_encoder(bson_to_json(item)) if item else None
     return JSONResponse(status_code=status.HTTP_200_OK, content={"item": item})
 
 @app.post("/items", response_class=JSONResponse)
 async def create_item(request: Request, item: dict):
+    """
+    Create a new item.
+
+    Args:
+        request (Request): The incoming request object.
+        item (dict): The item data to create.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        POST /items
+        Content-Type: application/json
+
+        {
+            "title": "Chateau Lafite",
+            "image_url": "https://example.com/chateau-lafite.jpg",
+            "description": "A prestigious Bordeaux wine",
+            "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+            "price": "55.99",
+            "volume": "750",
+            "volume_unit": "ml",
+            "alcohol_volume": "13.5",
+            "quantity": 5,
+            "origin_country_code": "FR",
+            "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7"
+        }
+
+        Response:
+        {
+            "message": "Item created successfully",
+            "item_id": "660e8400-e29b-41d4-a716-446655440001"
+        }
+        ```
+    """
     is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
     if not is_valid:
         return validation_response
@@ -158,6 +335,34 @@ async def create_item(request: Request, item: dict):
 
 @app.put("/item/{item_id}", response_class=JSONResponse)
 async def update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update")):
+    """
+    Update an existing item.
+
+    Args:
+        request (Request): The incoming request object.
+        item (dict): The updated item data.
+        item_id (str): The ID of the item to update.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        PUT /item/550e8400-e29b-41d4-a716-446655440000
+        Content-Type: application/json
+
+        {
+            "price": "47.99",
+            "quantity": 8
+        }
+
+        Response:
+        {
+            "message": "Item updated successfully",
+            "item_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+        ```
+    """
     is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
     if not is_valid:
         return validation_response
@@ -196,6 +401,27 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
 
 @app.delete("/item/{item_id}", response_class=JSONResponse)
 async def delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete")):
+    """
+    Delete an item by its ID.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to delete.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        DELETE /item/{uuid}
+
+        Response:
+        {
+            "message": "Item deleted successfully",
+            "item_id": "{uuid}"
+        }
+        ```
+    """
     result = await request.app.mongodb['items'].delete_one({"item_id": item_id})
     if result.deleted_count:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item deleted successfully"})
@@ -203,18 +429,109 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
 
 @app.get("/items/types", response_class=JSONResponse)
 async def get_item_types(request: Request):
+    """
+    Retrieve all available item types.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing the list of item types.
+
+    Example:
+        ```
+        GET /items/types
+
+        Response:
+        {
+            "types": [
+                {
+                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+                    "type": "red"
+                },
+                {
+                    "type_id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
+                    "type": "white"
+                },
+                // ... more types ...
+            ]
+        }
+        ```
+    """
     types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
     types = jsonable_encoder(bson_to_json(types))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
 
 @app.get("/items/brands", response_class=JSONResponse)
 async def get_item_brands(request: Request):
+    """
+    Retrieve all available item brands.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing the list of item brands.
+
+    Example:
+        ```
+        GET /items/brands
+
+        Response:
+        {
+            "brands": [
+                {
+                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
+                    "brand": "Chateau"
+                },
+                {
+                    "brand_id": "8q9w0e1r-2t3y-4u5i-6o7p-8a9s0d1f2g3h",
+                    "brand": "Domaine"
+                },
+                // ... more brands ...
+            ]
+        }
+        ```
+    """
     brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
     brands = jsonable_encoder(bson_to_json(brands))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
 
 @app.get("/items/countries", response_class=JSONResponse)
 async def get_item_countries(request: Request):
+    """
+    Retrieve all available item countries.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing the list of item countries.
+
+    Example:
+        ```
+        GET /items/countries
+
+        Response:
+        {
+            "countries": [
+                {
+                    "code": "FR",
+                    "unicode": "U+1F1EB U+1F1F7",
+                    "name": "France",
+                    "emoji": "🇫🇷"
+                },
+                {
+                    "code": "IT",
+                    "unicode": "U+1F1EE U+1F1F9",
+                    "name": "Italy",
+                    "emoji": "🇮🇹"
+                },
+                // ... more countries ...
+            ]
+        }
+        ```
+    """
     countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
     countries = jsonable_encoder(bson_to_json(countries))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
