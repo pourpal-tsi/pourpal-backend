@@ -51,18 +51,31 @@ app.add_middleware(
 
 # Endpoints
 
+# @app.get("/", response_class=JSONResponse)
+# async def root(request: Request):
+#     """
+#     Root endpoint.
+
+#     Args:
+#         request (Request): The incoming request object.
+
+#     Returns:
+#         JSONResponse: A JSON response containing a warning message.
+#     """
+#     return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
+
 @app.get("/", response_class=JSONResponse)
 async def root(request: Request):
     """
-    Root endpoint.
+    Redirect to the API documentation.
 
     Args:
         request (Request): The incoming request object.
 
     Returns:
-        JSONResponse: A JSON response containing a warning message.
+        RedirectResponse: A redirect response to the API documentation.
     """
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
+    return RedirectResponse(url="/docs")
 
 @app.get("/items", response_class=JSONResponse)
 async def get_items(
