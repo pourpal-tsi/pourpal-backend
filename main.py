@@ -430,13 +430,13 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
 @app.get("/items/types", response_class=JSONResponse)
 async def get_item_types(request: Request):
     """
-    Retrieve all available item types.
+    Retrieve all available item types, sorted alphabetically by type name.
 
     Args:
         request (Request): The incoming request object.
 
     Returns:
-        JSONResponse: A JSON response containing the list of item types.
+        JSONResponse: A JSON response containing the sorted list of item types.
 
     Example:
         ```
@@ -446,32 +446,35 @@ async def get_item_types(request: Request):
         {
             "types": [
                 {
-                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
-                    "type": "red"
+                    "type_id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
+                    "type": "beer"
                 },
                 {
-                    "type_id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
-                    "type": "white"
+                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+                    "type": "red wine"
                 },
-                // ... more types ...
+                {
+                    "type_id": "3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r",
+                    "type": "white wine"
+                }
             ]
         }
         ```
     """
-    types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
+    types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).sort("type", 1).to_list(length=None)
     types = jsonable_encoder(bson_to_json(types))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
 
 @app.get("/items/brands", response_class=JSONResponse)
 async def get_item_brands(request: Request):
     """
-    Retrieve all available item brands.
+    Retrieve all available item brands, sorted alphabetically by brand name.
 
     Args:
         request (Request): The incoming request object.
 
     Returns:
-        JSONResponse: A JSON response containing the list of item brands.
+        JSONResponse: A JSON response containing the sorted list of item brands.
 
     Example:
         ```
@@ -481,32 +484,35 @@ async def get_item_brands(request: Request):
         {
             "brands": [
                 {
-                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
-                    "brand": "Chateau"
+                    "brand_id": "8q9w0e1r-2t3y-4u5i-6o7p-8a9s0d1f2g3h",
+                    "brand": "Chateau Margaux"
                 },
                 {
-                    "brand_id": "8q9w0e1r-2t3y-4u5i-6o7p-8a9s0d1f2g3h",
-                    "brand": "Domaine"
+                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
+                    "brand": "Dom Perignon"
                 },
-                // ... more brands ...
+                {
+                    "brand_id": "9r0t1y2u-3i4o-5p6a-7s8d-9f0g1h2j3k4l",
+                    "brand": "Heineken"
+                }
             ]
         }
         ```
     """
-    brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
+    brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).sort("brand", 1).to_list(length=None)
     brands = jsonable_encoder(bson_to_json(brands))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
 
 @app.get("/items/countries", response_class=JSONResponse)
 async def get_item_countries(request: Request):
     """
-    Retrieve all available item countries.
+    Retrieve all available item countries, sorted alphabetically by country name.
 
     Args:
         request (Request): The incoming request object.
 
     Returns:
-        JSONResponse: A JSON response containing the list of item countries.
+        JSONResponse: A JSON response containing the sorted list of item countries.
 
     Example:
         ```
@@ -522,17 +528,22 @@ async def get_item_countries(request: Request):
                     "emoji": "🇫🇷"
                 },
                 {
+                    "code": "DE",
+                    "unicode": "U+1F1E9 U+1F1EA",
+                    "name": "Germany",
+                    "emoji": "🇩🇪"
+                },
+                {
                     "code": "IT",
                     "unicode": "U+1F1EE U+1F1F9",
                     "name": "Italy",
                     "emoji": "🇮🇹"
-                },
-                // ... more countries ...
+                }
             ]
         }
         ```
     """
-    countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).to_list(length=None)
+    countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).sort("name", 1).to_list(length=None)
     countries = jsonable_encoder(bson_to_json(countries))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
 
