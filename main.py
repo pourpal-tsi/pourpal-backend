@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from math import ceil
 
-from models import Item, Money, Volume
+from models import Item, Money, Volume, Brand, BeverageType
 
 from service_funcs import bson_to_json, get_client_ip, validate_item_attrs, generate_sku
 
@@ -181,12 +181,11 @@ async def get_items(
         "quantity": "quantity"
     }
 
+    sort_query = []
     if sort_by and sort_by in sort_fields:
         sort_field = sort_fields[sort_by]
         sort_direction = 1 if sort_order.lower() == "asc" else -1
         sort_query = [(sort_field, sort_direction)]
-    else:
-        sort_query = None
 
     # Count total matching items
     total_count = await request.app.mongodb['items'].count_documents(query)
@@ -196,7 +195,10 @@ async def get_items(
     skip = (page_number - 1) * page_size
 
     # Fetch paginated items with sorting
-    items = await request.app.mongodb['items'].find(query, {'_id': 0}).sort(sort_query).skip(skip).limit(page_size).to_list(length=None)
+    cursor = request.app.mongodb['items'].find(query, {'_id': 0})
+    if sort_query:
+        cursor = cursor.sort(sort_query)
+    items = await cursor.skip(skip).limit(page_size).to_list(length=None)
 
     items = jsonable_encoder(bson_to_json(items))
     
@@ -213,7 +215,7 @@ async def get_items(
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items, "paging": paging})
 
-@app.get("/item/{item_id}", response_class=JSONResponse)
+@app.get("/items/{item_id}", response_class=JSONResponse)
 async def get_item(request: Request, item_id: str = Path(..., title="The ID of the item to retrieve")):
     """
     Retrieve a specific item by its ID.
@@ -227,7 +229,7 @@ async def get_item(request: Request, item_id: str = Path(..., title="The ID of t
 
     Example:
         ```
-        GET /item/550e8400-e29b-41d4-a716-446655440000
+        GET /items/550e8400-e29b-41d4-a716-446655440000
 
         Response:
         {
@@ -288,10 +290,18 @@ async def create_item(request: Request, item: dict):
             "image_url": "https://example.com/chateau-lafite.jpg",
             "description": "A prestigious Bordeaux wine",
             "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
-            "price": "55.99",
-            "volume": "750",
-            "volume_unit": "ml",
-            "alcohol_volume": "13.5",
+            "price": {
+                "amount": "55.99",
+                "currency": "€"
+            },
+            "volume": {
+                "amount": "750",
+                "unit": "ml"
+            },
+            "alcohol_volume": {
+                "amount": "13.5",
+                "unit": "%"
+            },
             "quantity": 5,
             "origin_country_code": "FR",
             "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7"
@@ -316,9 +326,9 @@ async def create_item(request: Request, item: dict):
             description=item['description'],
             type_id=valid_type['type_id'],
             type_name=valid_type['type'],
-            price=Money(amount=Decimal128(item['price'])),
-            volume=Volume(amount=Decimal128(item['volume']), unit=item['volume_unit']),
-            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']), unit='%'),
+            price=Money(amount=Decimal128(item['price']['amount']), currency=item['price']['currency']),
+            volume=Volume(amount=Decimal128(item['volume']['amount']), unit=item['volume']['unit']),
+            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']['amount']), unit=item['alcohol_volume']['unit']),
             quantity=item['quantity'],
             origin_country_code=valid_country['code'],
             origin_country_name=valid_country['name'],
@@ -333,7 +343,7 @@ async def create_item(request: Request, item: dict):
         return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Item created successfully", "item_id": new_item.item_id})
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create item"})
 
-@app.put("/item/{item_id}", response_class=JSONResponse)
+@app.put("/items/{item_id}", response_class=JSONResponse)
 async def update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update")):
     """
     Update an existing item.
@@ -348,18 +358,34 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
 
     Example:
         ```
-        PUT /item/550e8400-e29b-41d4-a716-446655440000
+        PUT /items/550e8400-e29b-41d4-a716-446655440000
         Content-Type: application/json
 
         {
-            "price": "47.99",
-            "quantity": 8
+            "title": "Chateau Lafite",
+            "image_url": "https://example.com/chateau-lafite.jpg",
+            "description": "A prestigious Bordeaux wine",
+            "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+            "price": {
+                "amount": "55.99",
+                "currency": "€"
+            },
+            "volume": {
+                "amount": "750",
+                "unit": "ml"
+            },
+            "alcohol_volume": {
+                "amount": "13.5",
+                "unit": "%"
+            },
+            "quantity": 5,
+            "origin_country_code": "FR",
+            "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7"
         }
 
         Response:
         {
-            "message": "Item updated successfully",
-            "item_id": "550e8400-e29b-41d4-a716-446655440000"
+            "message": "Item updated successfully"
         }
         ```
     """
@@ -377,9 +403,9 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
             description=item['description'],
             type_id=valid_type['type_id'],
             type_name=valid_type['type'],
-            price=Money(amount=Decimal128(item['price'])),
-            volume=Volume(amount=Decimal128(item['volume']), unit=item['volume_unit']),
-            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']), unit='%'),
+            price=Money(amount=Decimal128(item['price']['amount']), currency=item['price']['currency']),
+            volume=Volume(amount=Decimal128(item['volume']['amount']), unit=item['volume']['unit']),
+            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']['amount']), unit=item['alcohol_volume']['unit']),
             quantity=item['quantity'],
             origin_country_code=valid_country['code'],
             origin_country_name=valid_country['name'],
@@ -399,7 +425,7 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item updated successfully"})
     return JSONResponse(status_code=404, content={"message": "Item not found"})
 
-@app.delete("/item/{item_id}", response_class=JSONResponse)
+@app.delete("/items/{item_id}", response_class=JSONResponse)
 async def delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete")):
     """
     Delete an item by its ID.
@@ -413,12 +439,11 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
 
     Example:
         ```
-        DELETE /item/{uuid}
+        DELETE /items/550e8400-e29b-41d4-a716-446655440000
 
         Response:
         {
-            "message": "Item deleted successfully",
-            "item_id": "{uuid}"
+            "message": "Item deleted successfully"
         }
         ```
     """
@@ -427,83 +452,7 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item deleted successfully"})
     return JSONResponse(status_code=404, content={"message": "Item not found"})
 
-@app.get("/items/types", response_class=JSONResponse)
-async def get_item_types(request: Request):
-    """
-    Retrieve all available item types, sorted alphabetically by type name.
-
-    Args:
-        request (Request): The incoming request object.
-
-    Returns:
-        JSONResponse: A JSON response containing the sorted list of item types.
-
-    Example:
-        ```
-        GET /items/types
-
-        Response:
-        {
-            "types": [
-                {
-                    "type_id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
-                    "type": "beer"
-                },
-                {
-                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
-                    "type": "red wine"
-                },
-                {
-                    "type_id": "3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r",
-                    "type": "white wine"
-                }
-            ]
-        }
-        ```
-    """
-    types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).sort("type", 1).to_list(length=None)
-    types = jsonable_encoder(bson_to_json(types))
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
-
-@app.get("/items/brands", response_class=JSONResponse)
-async def get_item_brands(request: Request):
-    """
-    Retrieve all available item brands, sorted alphabetically by brand name.
-
-    Args:
-        request (Request): The incoming request object.
-
-    Returns:
-        JSONResponse: A JSON response containing the sorted list of item brands.
-
-    Example:
-        ```
-        GET /items/brands
-
-        Response:
-        {
-            "brands": [
-                {
-                    "brand_id": "8q9w0e1r-2t3y-4u5i-6o7p-8a9s0d1f2g3h",
-                    "brand": "Chateau Margaux"
-                },
-                {
-                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
-                    "brand": "Dom Perignon"
-                },
-                {
-                    "brand_id": "9r0t1y2u-3i4o-5p6a-7s8d-9f0g1h2j3k4l",
-                    "brand": "Heineken"
-                }
-            ]
-        }
-        ```
-    """
-    brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).sort("brand", 1).to_list(length=None)
-    brands = jsonable_encoder(bson_to_json(brands))
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
-
-@app.get("/items/countries", response_class=JSONResponse)
+@app.get("/item-countries", response_class=JSONResponse)
 async def get_item_countries(request: Request):
     """
     Retrieve all available item countries, sorted alphabetically by country name.
@@ -516,7 +465,7 @@ async def get_item_countries(request: Request):
 
     Example:
         ```
-        GET /items/countries
+        GET /item-countries
 
         Response:
         {
@@ -546,6 +495,304 @@ async def get_item_countries(request: Request):
     countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).sort("name", 1).to_list(length=None)
     countries = jsonable_encoder(bson_to_json(countries))
     return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
+
+@app.get("/item-brands", response_class=JSONResponse)
+async def get_item_brands(request: Request):
+    """
+    Retrieve all available item brands, sorted alphabetically by brand name.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing the sorted list of item brands.
+
+    Example:
+        ```
+        GET /item-brands
+
+        Response:
+        {
+            "brands": [
+                {
+                    "brand_id": "8q9w0e1r-2t3y-4u5i-6o7p-8a9s0d1f2g3h",
+                    "brand": "Chateau Margaux"
+                },
+                {
+                    "brand_id": "7p8o9i0u-1y2t3r4e-5w6q7",
+                    "brand": "Dom Perignon"
+                },
+                {
+                    "brand_id": "9r0t1y2u-3i4o-5p6a-7s8d-9f0g1h2j3k4l",
+                    "brand": "Heineken"
+                }
+            ]
+        }
+        ```
+    """
+    brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).sort("brand", 1).to_list(length=None)
+    brands = jsonable_encoder(bson_to_json(brands))
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
+
+@app.post("/item-brands", response_class=JSONResponse)
+async def create_item_brand(request: Request, brand: dict):
+    """
+    Create a new item brand.
+
+    Args:
+        request (Request): The incoming request object.
+        brand (dict): The brand data to create.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        POST /item-brands
+        Content-Type: application/json
+
+        {
+            "brand": "Chateau Margaux"
+        }
+
+        Response:
+        {
+            "message": "Brand created successfully",
+            "brand_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+        ```
+    """
+    if 'brand' not in brand or not brand['brand']:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
+
+    existing_brand = await request.app.mongodb['beverage_brands'].find_one({"brand": brand['brand']})
+    if existing_brand:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Brand already exists"})
+
+    new_brand = Brand(brand=brand['brand'])
+    result = await request.app.mongodb['beverage_brands'].insert_one(new_brand.model_dump())
+    if result.inserted_id:
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Brand created successfully", "brand_id": new_brand.brand_id})
+    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create brand"})
+
+@app.put("/item-brands/{brand_id}", response_class=JSONResponse)
+async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(..., title="The ID of the brand to update")):
+    """
+    Update an existing item brand.
+
+    Args:
+        request (Request): The incoming request object.
+        brand (dict): The updated brand data.
+        brand_id (str): The ID of the brand to update.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        PUT /item-brands/550e8400-e29b-41d4-a716-446655440000
+        Content-Type: application/json
+
+        {
+            "brand": "Chateau Lafite Rothschild"
+        }
+
+        Response:
+        {
+            "message": "Brand updated successfully"
+        }
+        ```
+    """
+    if 'brand' not in brand or not brand['brand']:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
+
+    existing_brand = await request.app.mongodb['beverage_brands'].find_one({"brand": brand['brand'], "brand_id": {"$ne": brand_id}})
+    if existing_brand:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Brand name already exists"})
+
+    result = await request.app.mongodb['beverage_brands'].update_one(
+        {"brand_id": brand_id},
+        {"$set": {"brand": brand['brand']}}
+    )
+    if result.modified_count:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Brand updated successfully"})
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
+
+@app.delete("/item-brands/{brand_id}", response_class=JSONResponse)
+async def delete_item_brand(request: Request, brand_id: str = Path(..., title="The ID of the brand to delete")):
+    """
+    Delete an item brand by its ID.
+
+    Args:
+        request (Request): The incoming request object.
+        brand_id (str): The ID of the brand to delete.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        DELETE /item-brands/550e8400-e29b-41d4-a716-446655440000
+
+        Response:
+        {
+            "message": "Brand deleted successfully"
+        }
+        ```
+    """
+    result = await request.app.mongodb['beverage_brands'].delete_one({"brand_id": brand_id})
+    if result.deleted_count:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Brand deleted successfully"})
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
+
+@app.get("/item-types", response_class=JSONResponse)
+async def get_item_types(request: Request):
+    """
+    Retrieve all available item types, sorted alphabetically by type name.
+
+    Args:
+        request (Request): The incoming request object.
+
+    Returns:
+        JSONResponse: A JSON response containing the sorted list of item types.
+
+    Example:
+        ```
+        GET /item-types
+
+        Response:
+        {
+            "types": [
+                {
+                    "type_id": "2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q",
+                    "type": "beer"
+                },
+                {
+                    "type_id": "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p",
+                    "type": "red wine"
+                },
+                {
+                    "type_id": "3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r",
+                    "type": "white wine"
+                }
+            ]
+        }
+        ```
+    """
+    types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).sort("type", 1).to_list(length=None)
+    types = jsonable_encoder(bson_to_json(types))
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
+
+@app.post("/item-types", response_class=JSONResponse)
+async def create_item_type(request: Request, type: dict):
+    """
+    Create a new item type.
+
+    Args:
+        request (Request): The incoming request object.
+        type (dict): The type data to create.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        POST /item-types
+        Content-Type: application/json
+
+        {
+            "type": "Red Wine"
+        }
+
+        Response:
+        {
+            "message": "Type created successfully",
+            "type_id": "660e8400-e29b-41d4-a716-446655440001"
+        }
+        ```
+    """
+    if 'type' not in type or not type['type']:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
+
+    existing_type = await request.app.mongodb['beverage_types'].find_one({"type": type['type']})
+    if existing_type:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Type already exists"})
+
+    new_type = BeverageType(type=type['type'])
+    result = await request.app.mongodb['beverage_types'].insert_one(new_type.model_dump())
+    if result.inserted_id:
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Type created successfully", "type_id": new_type.type_id})
+    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create type"})
+
+@app.put("/item-types/{type_id}", response_class=JSONResponse)
+async def update_item_type(request: Request, type: dict, type_id: str = Path(..., title="The ID of the type to update")):
+    """
+    Update an existing item type.
+
+    Args:
+        request (Request): The incoming request object.
+        type (dict): The updated type data.
+        type_id (str): The ID of the type to update.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        PUT /item-types/660e8400-e29b-41d4-a716-446655440001
+        Content-Type: application/json
+
+        {
+            "type": "Bordeaux Red Wine"
+        }
+
+        Response:
+        {
+            "message": "Type updated successfully"
+        }
+        ```
+    """
+    if 'type' not in type or not type['type']:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
+
+    existing_type = await request.app.mongodb['beverage_types'].find_one({"type": type['type'], "type_id": {"$ne": type_id}})
+    if existing_type:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Type name already exists"})
+
+    result = await request.app.mongodb['beverage_types'].update_one(
+        {"type_id": type_id},
+        {"$set": {"type": type['type']}}
+    )
+    if result.modified_count:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Type updated successfully"})
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
+
+@app.delete("/item-types/{type_id}", response_class=JSONResponse)
+async def delete_item_type(request: Request, type_id: str = Path(..., title="The ID of the type to delete")):
+    """
+    Delete an item type by its ID.
+
+    Args:
+        request (Request): The incoming request object.
+        type_id (str): The ID of the type to delete.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        DELETE /item-types/660e8400-e29b-41d4-a716-446655440001
+
+        Response:
+        {
+            "message": "Type deleted successfully"
+        }
+        ```
+    """
+    result = await request.app.mongodb['beverage_types'].delete_one({"type_id": type_id})
+    if result.deleted_count:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Type deleted successfully"})
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
