@@ -37,9 +37,6 @@ def decimal128_to_str(obj):
         return str(obj.to_decimal())
     return obj
 
-def bson_to_json(data):
-    return json.loads(json_util.dumps(data))
-
 async def validate_item_attrs(request, item):
     # Validate type_id, brand_id, and origin_country_code
     type_id = item.get('type_id')
@@ -62,3 +59,21 @@ async def validate_item_attrs(request, item):
         return (False, JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid origin_country_code"}), None, None, None)
     
     return (True, JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Validation successful"}), valid_type, valid_brand, valid_country)
+
+def bson_to_json(data):
+    if isinstance(data, dict):
+        return {key: bson_to_json(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [bson_to_json(item) for item in data]
+    elif isinstance(data, ObjectId):
+        return str(data)
+    elif isinstance(data, Decimal128):
+        return str(data.to_decimal())
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    elif isinstance(data, dict) and '$date' in data:
+        return data['$date']
+    elif isinstance(data, dict) and '$numberDecimal' in data:
+        return str(data['$numberDecimal'])
+    else:
+        return data

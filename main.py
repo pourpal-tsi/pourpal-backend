@@ -13,7 +13,6 @@ from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, H
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
-from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from math import ceil
@@ -230,7 +229,7 @@ async def get_items(
         cursor = cursor.sort(sort_query)
     items = await cursor.skip(skip).limit(page_size).to_list(length=None)
 
-    items = jsonable_encoder(bson_to_json(items))
+    items = bson_to_json(items)
     
     # Prepare pagination metadata
     paging = {
@@ -295,7 +294,7 @@ async def get_item(request: Request, item_id: str = Path(..., title="The ID of t
         ```
     """
     item = await request.app.mongodb['items'].find_one({"item_id": item_id}, {'_id': 0})
-    item = jsonable_encoder(bson_to_json(item)) if item else None
+    item = bson_to_json(item) if item else None
     return JSONResponse(status_code=status.HTTP_200_OK, content={"item": item})
 
 @app.post("/items", response_class=JSONResponse)
@@ -523,7 +522,7 @@ async def get_item_countries(request: Request):
         ```
     """
     countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).sort("name", 1).to_list(length=None)
-    countries = jsonable_encoder(bson_to_json(countries))
+    countries = bson_to_json(countries)
     return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
 
 @app.get("/item-brands", response_class=JSONResponse)
@@ -561,7 +560,7 @@ async def get_item_brands(request: Request):
         ```
     """
     brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).sort("brand", 1).to_list(length=None)
-    brands = jsonable_encoder(bson_to_json(brands))
+    brands = bson_to_json(brands)
     return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
 
 @app.post("/item-brands", response_class=JSONResponse)
@@ -710,7 +709,7 @@ async def get_item_types(request: Request):
         ```
     """
     types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).sort("type", 1).to_list(length=None)
-    types = jsonable_encoder(bson_to_json(types))
+    types = bson_to_json(types)
     return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
 
 @app.post("/item-types", response_class=JSONResponse)
