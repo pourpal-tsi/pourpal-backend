@@ -85,15 +85,21 @@ class Item(BaseModel):
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class UserAuthorization(BaseModel):
+    ip_address: str | None = None
+    timestamp: datetime
+
+
 class User(BaseModel):
     user_id: str = Field(default_factory=lambda: str(uuid4()))
     email: str
     password: str
     encoded_password: str = ""
     full_name: str | None = None
+    gender: bool = True  # True = male, False = female
     sessions_ids: list[str] = []
     is_active: bool = True
-    login_timestamps: list[datetime] = []
+    authorizations: list[UserAuthorization] = []
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
