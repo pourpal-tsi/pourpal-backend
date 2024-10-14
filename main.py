@@ -97,12 +97,12 @@ async def get_items(
     Args:
         request (Request): The incoming request object.
         search (str, optional): Search items by title (case-insensitive, substring match).
-        types (str, optional): Filter by beverage types (comma-separated).
-        countries (str, optional): Filter by countries of origin (comma-separated).
-        brands (str, optional): Filter by brands (comma-separated).
+        types (str, optional): Filter by beverage types (comma-separated) using type_id.
+        countries (str, optional): Filter by countries of origin (comma-separated) using country_code.
+        brands (str, optional): Filter by brands (comma-separated) using brand_id.
         min_price (float, optional): Minimum price for filtering.
         max_price (float, optional): Maximum price for filtering.
-        sort_by (str, optional): Field to sort by (sku, title, type, brand, country, quantity).
+        sort_by (str, optional): Field to sort by (sku, title, type, brand, country, quantity, price).
         sort_order (str, optional): Sort order (asc or desc). Defaults to "asc".
         page_size (int, optional): Number of items per page. Defaults to 25.
         page_number (int, optional): Page number. Defaults to 1.
@@ -112,7 +112,7 @@ async def get_items(
 
     Example:
         ```
-        GET /items?search=wine&types=red,white&countries=FR,IT&brands=Chateau&min_price=10&max_price=50&sort_by=price&sort_order=desc&page_size=10&page_number=1
+        GET /items?search=wine&types=[uuid of type]&countries=FR,IT&brands=[uuid of brand]&min_price=10&max_price=50&sort_by=price&sort_order=desc&page_size=10&page_number=1
 
         Response:
         {
@@ -158,6 +158,19 @@ async def get_items(
             }
         }
         ```
+
+    Sort fields:
+        - sku
+        - title
+        - type_name
+        - brand_name
+        - origin_country_name
+        - quantity
+        - price
+
+    Sort order:
+        - asc
+        - desc
     """
     query = {}
 
@@ -167,6 +180,8 @@ async def get_items(
     if types:
         type_list = [t.strip() for t in types.split(',')]
         query["type_id"] = {"$in": type_list}
+        print(type_list)
+        print(query["type_id"])
 
     if countries:
         country_list = [c.strip() for c in countries.split(',')]
@@ -191,14 +206,16 @@ async def get_items(
         "type": "type_name",
         "brand": "brand_name",
         "country": "origin_country_name",
-        "quantity": "quantity"
+        "quantity": "quantity",
+        "price": "price.amount"
     }
 
     sort_query = []
     if sort_by and sort_by in sort_fields:
         sort_field = sort_fields[sort_by]
-        sort_direction = 1 if sort_order.lower() == "asc" else -1
-        sort_query = [(sort_field, sort_direction)]
+        sort_direction = 1 if sort_order.lower() == "asc" else -1 if sort_order.lower() == "desc" else None
+        if sort_direction is not None:
+            sort_query = [(sort_field, sort_direction)]
 
     # Count total matching items
     total_count = await request.app.mongodb['items'].count_documents(query)
