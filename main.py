@@ -5,11 +5,11 @@ from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import Decimal128
 from contextlib import asynccontextmanager
-from config import MONGO_DB
+from config import MONGO_DB, JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_REFRESH_TOKEN_EXPIRE_MINUTES
 
 import uvicorn
 from bson import ObjectId
-from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException, Query, Path
+from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException, Query, Path, Header
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
@@ -17,9 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from math import ceil
 
-from models import Item, Money, Volume, Brand, BeverageType
+from models import Item, Money, Volume, Brand, BeverageType, UserAdmin, UserCustomer
 
-from service_funcs import bson_to_json, get_client_ip, validate_item_attrs, generate_sku
+from service_funcs import bson_to_json, get_client_ip, validate_item_attrs, generate_sku, generate_random_password, \
+    encode_token, decode_token, send_emails, password_is_correct, is_user_admin
 
 
 @asynccontextmanager
@@ -47,6 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+EMAIL_ENABLED = True
 
 # Endpoints
 
@@ -76,6 +78,7 @@ async def root(request: Request):
     """
     return RedirectResponse(url="/docs")
 
+# Items
 @app.get("/items", response_class=JSONResponse)
 async def get_items(
     request: Request,
@@ -298,13 +301,14 @@ async def get_item(request: Request, item_id: str = Path(..., title="The ID of t
     return JSONResponse(status_code=status.HTTP_200_OK, content={"item": item})
 
 @app.post("/items", response_class=JSONResponse)
-async def create_item(request: Request, item: dict):
+async def create_item(request: Request, item: dict, authorization: str = Header(None)):
     """
-    Create a new item.
+    Create a new item. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         item (dict): The item data to create.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -313,6 +317,7 @@ async def create_item(request: Request, item: dict):
         ```
         POST /items
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "title": "Chateau Lafite",
@@ -343,6 +348,15 @@ async def create_item(request: Request, item: dict):
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+    
     is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
     if not is_valid:
         return validation_response
@@ -373,14 +387,15 @@ async def create_item(request: Request, item: dict):
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create item"})
 
 @app.put("/items/{item_id}", response_class=JSONResponse)
-async def update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update")):
+async def update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update"), authorization: str = Header(None)):
     """
-    Update an existing item.
+    Update an existing item. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         item (dict): The updated item data.
         item_id (str): The ID of the item to update.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -389,6 +404,7 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
         ```
         PUT /items/550e8400-e29b-41d4-a716-446655440000
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "title": "Chateau Lafite",
@@ -418,6 +434,15 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
     if not is_valid:
         return validation_response
@@ -444,7 +469,7 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
             added_at=db_item['added_at']
         )            
     except Exception as e:
-        return JSONResponse(status_code=400, detail=str(e))
+        return JSONResponse(status_code=400, content={"message": str(e)})
 
     result = await request.app.mongodb['items'].update_one(
         {"item_id": item_id},
@@ -455,13 +480,14 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
     return JSONResponse(status_code=404, content={"message": "Item not found"})
 
 @app.delete("/items/{item_id}", response_class=JSONResponse)
-async def delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete")):
+async def delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete"), authorization: str = Header(None)):
     """
-    Delete an item by its ID.
+    Delete an item by its ID. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         item_id (str): The ID of the item to delete.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -469,6 +495,7 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
     Example:
         ```
         DELETE /items/550e8400-e29b-41d4-a716-446655440000
+        Authorization: Bearer <access_token>
 
         Response:
         {
@@ -476,11 +503,21 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     result = await request.app.mongodb['items'].delete_one({"item_id": item_id})
     if result.deleted_count:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item deleted successfully"})
     return JSONResponse(status_code=404, content={"message": "Item not found"})
 
+# Item Countries
 @app.get("/item-countries", response_class=JSONResponse)
 async def get_item_countries(request: Request):
     """
@@ -525,6 +562,7 @@ async def get_item_countries(request: Request):
     countries = bson_to_json(countries)
     return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
 
+# Item Brands
 @app.get("/item-brands", response_class=JSONResponse)
 async def get_item_brands(request: Request):
     """
@@ -564,13 +602,14 @@ async def get_item_brands(request: Request):
     return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
 
 @app.post("/item-brands", response_class=JSONResponse)
-async def create_item_brand(request: Request, brand: dict):
+async def create_item_brand(request: Request, brand: dict, authorization: str = Header(None)):
     """
-    Create a new item brand.
+    Create a new item brand. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         brand (dict): The brand data to create.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -579,6 +618,7 @@ async def create_item_brand(request: Request, brand: dict):
         ```
         POST /item-brands
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "brand": "Chateau Margaux"
@@ -591,6 +631,15 @@ async def create_item_brand(request: Request, brand: dict):
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     if 'brand' not in brand or not brand['brand']:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
 
@@ -605,14 +654,15 @@ async def create_item_brand(request: Request, brand: dict):
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create brand"})
 
 @app.put("/item-brands/{brand_id}", response_class=JSONResponse)
-async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(..., title="The ID of the brand to update")):
+async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(..., title="The ID of the brand to update"), authorization: str = Header(None)):
     """
-    Update an existing item brand.
+    Update an existing item brand. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         brand (dict): The updated brand data.
         brand_id (str): The ID of the brand to update.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -621,6 +671,7 @@ async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(
         ```
         PUT /item-brands/550e8400-e29b-41d4-a716-446655440000
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "brand": "Chateau Lafite Rothschild"
@@ -632,6 +683,15 @@ async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     if 'brand' not in brand or not brand['brand']:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
 
@@ -648,13 +708,14 @@ async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
 
 @app.delete("/item-brands/{brand_id}", response_class=JSONResponse)
-async def delete_item_brand(request: Request, brand_id: str = Path(..., title="The ID of the brand to delete")):
+async def delete_item_brand(request: Request, brand_id: str = Path(..., title="The ID of the brand to delete"), authorization: str = Header(None)):
     """
-    Delete an item brand by its ID.
+    Delete an item brand by its ID. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         brand_id (str): The ID of the brand to delete.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -662,6 +723,7 @@ async def delete_item_brand(request: Request, brand_id: str = Path(..., title="T
     Example:
         ```
         DELETE /item-brands/550e8400-e29b-41d4-a716-446655440000
+        Authorization: Bearer <access_token>
 
         Response:
         {
@@ -669,11 +731,21 @@ async def delete_item_brand(request: Request, brand_id: str = Path(..., title="T
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     result = await request.app.mongodb['beverage_brands'].delete_one({"brand_id": brand_id})
     if result.deleted_count:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Brand deleted successfully"})
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
 
+# Item Types
 @app.get("/item-types", response_class=JSONResponse)
 async def get_item_types(request: Request):
     """
@@ -713,13 +785,14 @@ async def get_item_types(request: Request):
     return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
 
 @app.post("/item-types", response_class=JSONResponse)
-async def create_item_type(request: Request, type: dict):
+async def create_item_type(request: Request, type: dict, authorization: str = Header(None)):
     """
-    Create a new item type.
+    Create a new item type. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         type (dict): The type data to create.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -728,6 +801,7 @@ async def create_item_type(request: Request, type: dict):
         ```
         POST /item-types
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "type": "Red Wine"
@@ -740,6 +814,15 @@ async def create_item_type(request: Request, type: dict):
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     if 'type' not in type or not type['type']:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
 
@@ -754,14 +837,15 @@ async def create_item_type(request: Request, type: dict):
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create type"})
 
 @app.put("/item-types/{type_id}", response_class=JSONResponse)
-async def update_item_type(request: Request, type: dict, type_id: str = Path(..., title="The ID of the type to update")):
+async def update_item_type(request: Request, type: dict, type_id: str = Path(..., title="The ID of the type to update"), authorization: str = Header(None)):
     """
-    Update an existing item type.
+    Update an existing item type. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         type (dict): The updated type data.
         type_id (str): The ID of the type to update.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -770,6 +854,7 @@ async def update_item_type(request: Request, type: dict, type_id: str = Path(...
         ```
         PUT /item-types/660e8400-e29b-41d4-a716-446655440001
         Content-Type: application/json
+        Authorization: Bearer <access_token>
 
         {
             "type": "Bordeaux Red Wine"
@@ -781,6 +866,15 @@ async def update_item_type(request: Request, type: dict, type_id: str = Path(...
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     if 'type' not in type or not type['type']:
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
 
@@ -797,13 +891,14 @@ async def update_item_type(request: Request, type: dict, type_id: str = Path(...
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
 
 @app.delete("/item-types/{type_id}", response_class=JSONResponse)
-async def delete_item_type(request: Request, type_id: str = Path(..., title="The ID of the type to delete")):
+async def delete_item_type(request: Request, type_id: str = Path(..., title="The ID of the type to delete"), authorization: str = Header(None)):
     """
-    Delete an item type by its ID.
+    Delete an item type by its ID. Only accessible by authenticated admin users.
 
     Args:
         request (Request): The incoming request object.
         type_id (str): The ID of the type to delete.
+        authorization (str): The Authorization header containing the access token.
 
     Returns:
         JSONResponse: A JSON response indicating the success or failure of the operation.
@@ -811,6 +906,7 @@ async def delete_item_type(request: Request, type_id: str = Path(..., title="The
     Example:
         ```
         DELETE /item-types/660e8400-e29b-41d4-a716-446655440001
+        Authorization: Bearer <access_token>
 
         Response:
         {
@@ -818,10 +914,302 @@ async def delete_item_type(request: Request, type_id: str = Path(..., title="The
         }
         ```
     """
+    # Authentication and authorization check
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    is_admin = await is_user_admin(request, access_token)
+    if not is_admin:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
+
     result = await request.app.mongodb['beverage_types'].delete_one({"type_id": type_id})
     if result.deleted_count:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Type deleted successfully"})
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
 
+# Registration and Authentication
+@app.post("/auth/login", response_class=JSONResponse)  # Returns two tokens: access and refresh
+async def login(request: Request, user_data: dict):
+    """
+    Login a user.
+
+    Args:
+        request (Request): The incoming request object.
+        user_data (dict): The user data to login. Must contain email and password.
+
+    Returns:
+        JSONResponse: A JSON response containing the access and refresh tokens.
+
+    Example:
+        ```
+        POST /auth/login
+        Content-Type: application/json
+
+        {
+            "email": "user@example.com",
+            "password": "password123"
+        }
+
+        Response:
+        {
+            "access_token": "new_access_token",
+            "refresh_token": "new_refresh_token"
+        }
+        ```
+    """
+    # Check if email and password are provided
+    if 'email' not in user_data or 'password' not in user_data:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email and password are required"})
+
+    # Check if user exists and password is correct
+    user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
+    if not user or not password_is_correct(user_password=user_data['password'], encoded_password=user['encoded_password']):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid email or password"})
+
+    # Generate tokens
+    access_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    refresh_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
+
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token, "refresh_token": refresh_token})
+    
+@app.post("/auth/register/admin", response_class=JSONResponse)
+async def register_admin(request: Request, user_data: dict, authorization: str = Header(None)):
+    """
+    Register a new admin user.
+
+    Args:
+        request (Request): The incoming request object.
+        user_data (dict): The user data to register. Must contain new admin email.
+        authorization (str): The Authorization header containing the access token.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        POST /auth/register/admin
+        Content-Type: application/json
+        Authorization: Bearer <access_token>
+
+        {
+            "email": "admin@example.com"
+        }
+
+        Response:
+        {
+            "message": "Admin registered successfully",
+            "user_id": "770e8400-e29b-41d4-a716-446655440001"
+        }
+        ```
+    """
+    # Check if the caller is an admin
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    token_data = decode_token(access_token)
+    caller_user_id = token_data.get('user_id') if token_data else None
+    if caller_user_id:
+        caller_user = await request.app.mongodb['users'].find_one({"user_id": caller_user_id})
+        if caller_user['role'] != 'admin':
+            return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Caller user is not an admin"})
+    else:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid access token"})
+
+    # Check if request body has email
+    if 'email' not in user_data:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email is required"})
+    
+    # Check if email is already in use
+    existing_user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
+    if existing_user:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Email already in use"})
+        
+    # Create new admin user
+    password = generate_random_password(length=8)
+    user = UserAdmin(email=user_data['email'], password=password)
+    result = await request.app.mongodb['users'].insert_one(user.model_dump())
+    if result.inserted_id:
+        if EMAIL_ENABLED:
+            # Send email to the new admin user
+            subject = "Admin Registration Successful"
+            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as an administrator of the PourPal platform.
+                        <br>Your password is: <b>{password}</b><br><small style="color: gray;">Please change your password after logging in.</small><br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
+            try:
+                await send_emails([user.email], subject, html=message)
+            except Exception as e:
+                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Admin registered successfully", "user_id": user.user_id})
+    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register admin"})
+
+@app.post("/auth/register/customer", response_class=JSONResponse)
+async def register_customer(request: Request, user_data: dict):
+    """
+    Register a new customer user.
+
+    Args:
+        request (Request): The incoming request object.
+        user_data (dict): The user data to register. Must contain new customer email and password.
+
+    Returns:
+        JSONResponse: A JSON response indicating the success or failure of the operation.
+
+    Example:
+        ```
+        POST /auth/register/customer
+        Content-Type: application/json
+
+        {
+            "email": "customer@example.com",
+            "password": "password123"
+        }
+
+        Response:
+        {
+            "message": "Customer registered successfully",
+            "user_id": "770e8400-e29b-41d4-a716-446655440002"
+        }
+        ```
+    """
+    # Check if request body has email and password
+    if 'email' not in user_data or 'password' not in user_data:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email and password are required"})
+    
+    # Check if email is already in use
+    existing_user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
+    if existing_user:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Email already in use"})
+    
+    # Create new customer user
+    user = UserCustomer(email=user_data['email'], password=user_data['password'])
+    result = await request.app.mongodb['users'].insert_one(user.model_dump())
+    if result.inserted_id:
+        if EMAIL_ENABLED:
+            # Send email to the new customer user
+            subject = "Customer Registration Successful"
+            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as a customer of the PourPal platform.
+                        <br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
+            try:
+                await send_emails([user.email], subject, html=message)
+            except Exception as e:
+                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Customer registered successfully", "user_id": user.user_id})
+    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register customer"})
+
+@app.post("/auth/refresh", response_class=JSONResponse)
+async def refresh_token(request: Request, authorization: str = Header(None)):
+    """
+    Refresh the access token using a valid refresh token.
+
+    Args:
+        request (Request): The incoming request object.
+        authorization (str): The Authorization header containing the refresh token.
+
+    Returns:
+        JSONResponse: A JSON response containing new access and refresh tokens.
+
+    Example:
+        ```
+        POST /auth/refresh
+        Authorization: Bearer existing_refresh_token
+
+        Response:
+        {
+            "access_token": "new_access_token",
+            "refresh_token": "new_refresh_token"
+        }
+        ```
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid authorization header"})
+
+    refresh_token = authorization.split(" ")[1]
+    
+    try:
+        # Decode and validate the refresh token
+        token_data = decode_token(refresh_token)
+        user_id = token_data.get('user_id')
+        
+        if not user_id:
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid refresh token"})
+        
+        # Check if the user exists
+        user = await request.app.mongodb['users'].find_one({"user_id": user_id})
+        if not user:
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "User not found"})
+        
+        # Generate new tokens
+        new_access_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        new_refresh_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
+        
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token
+        })
+    
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": f"Invalid refresh token: {str(e)}"})
+
+@app.get("/auth/profile", response_class=JSONResponse)
+async def get_profile(request: Request, authorization: str = Header(None)):
+    """
+    Get the profile details of the logged-in user.
+
+    Args:
+        request (Request): The incoming request object.
+        authorization (str): The Authorization header containing the access token.
+
+    Returns:
+        JSONResponse: A JSON response containing the user's profile details.
+
+    Example:
+        ```
+        GET /auth/profile
+        Authorization: Bearer <access_token>
+
+        Response:
+        {
+            "email": "user@example.com",
+            "role": "admin",
+            "full_name": "John Doe",
+            "is_active": true,
+            "updated_at": "2024-02-14T12:00:00Z",
+            "created_at": "2024-02-14T12:00:00Z"
+        }
+        ```
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+
+    access_token = authorization.split(" ")[1]
+    
+    # Decode the access token
+    try:
+        decoded_token = decode_token(access_token)
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": f"Invalid access token: {str(e)}"})
+
+    # Get the user ID from the access token
+    user_id = decoded_token.get('user_id')
+    if not user_id:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid access token"})
+
+    # Get the user details from the database
+    user = await request.app.mongodb['users'].find_one({"user_id": user_id})
+    if not user:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "User not found"})
+
+    bson_user_data = {
+        "email": user['email'],
+        "role": user['role'],
+        "full_name": user['full_name'],
+        "is_active": user['is_active'],
+        "updated_at": user['updated_at'],
+        "created_at": user['created_at']
+    }
+    
+    return JSONResponse(status_code=status.HTTP_200_OK, content=bson_to_json(bson_user_data))
+    
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

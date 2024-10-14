@@ -5,6 +5,7 @@ from uuid import uuid4
 from decimal import Decimal
 from typing import Literal
 from bson import Decimal128
+import bcrypt
 
 
 class Money(BaseModel):
@@ -24,7 +25,7 @@ class Money(BaseModel):
             return v
         return Decimal128(str(v))
     
-
+    
 class Volume(BaseModel):
     amount: Decimal128 | str
     unit: Literal['ml', 'cl', 'dl', 'l', '%']
@@ -82,3 +83,47 @@ class Item(BaseModel):
     
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class User(BaseModel):
+    user_id: str = Field(default_factory=lambda: str(uuid4()))
+    email: str
+    password: str
+    encoded_password: str = ""
+    full_name: str | None = None
+    sessions_ids: list[str] = []
+    is_active: bool = True
+    login_timestamps: list[datetime] = []
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.password and not self.encoded_password:
+            self.encoded_password = self.encode_password(self.password)
+            self.password = ""  # Clear the plain text password
+
+    @staticmethod
+    def encode_password(password: str) -> str:
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+class UserAdmin(User):
+    role: Literal['admin'] = 'admin'
+
+
+class CartItem(BaseModel):
+    item_id: str
+    quantity: int
+
+
+class Cart(BaseModel):
+    cart_id: str = Field(default_factory=lambda: str(uuid4()))
+    cart_items: list[CartItem] = []
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserCustomer(User):
+    role: Literal['customer'] = 'customer'
+    carts: list[Cart] = []

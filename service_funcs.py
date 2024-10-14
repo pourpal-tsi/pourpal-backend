@@ -1,11 +1,18 @@
 import pathlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 import passlib
 from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import Decimal128, json_util
 from contextlib import asynccontextmanager
 from config import MONGO_DB
+
+from smtplib import SMTP, SMTPException
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+from jose import JWTError, jwt
+import bcrypt
 
 import uvicorn
 from bson import ObjectId
@@ -16,12 +23,20 @@ from fastapi import BackgroundTasks
 from models import Item, Money, Volume
 
 import json
-from random import randint
+import random
+import string
+
+from config import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_DEFAULT_EXPIRE_MINUTES, GOOGLE_MAIL_APP_EMAIL, GOOGLE_MAIL_APP_PASSWORD
+
+
+JWT_SECURITY: bool = False  # TODO: JWT_SECURITY=False for local development
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
 
 
 def generate_sku(type_name: str) -> str:
     type_code = type_name[:3].upper()
-    random_number = randint(1000000, 9999999)
+    random_number = random.randint(1000000, 9999999)
     return f"{type_code}{random_number}"    
 
 def get_client_ip(request: Request) -> str | None:
@@ -77,3 +92,67 @@ def bson_to_json(data):
         return str(data['$numberDecimal'])
     else:
         return data
+
+# Token functions
+def encode_token(data: dict, expires_delta_minutes: int = JWT_DEFAULT_EXPIRE_MINUTES, scope: str = "tier_1"):
+    data['scope'] = scope
+    to_encode = data.copy()
+    expire = datetime.now(UTC) + timedelta(minutes=expires_delta_minutes)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+def decode_token(token: str):
+    try:
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+    
+# Random Password Generator
+## Password must contain at least one uppercase letter, one lowercase letter and one number
+def generate_random_password(length: int = 8):
+    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
+
+# Send Email
+async def send_emails(receivers_emails: list, subject: str, html: str | None = None, message: str | None = None):
+    # Login to the server email
+    try:
+        smtp = SMTP(EMAIL_HOST, EMAIL_PORT)
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.login(GOOGLE_MAIL_APP_EMAIL, GOOGLE_MAIL_APP_PASSWORD)
+    except SMTPException as e:
+        return
+    
+    # Send email to each email in the list
+    for rec_email in receivers_emails:
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = GOOGLE_MAIL_APP_EMAIL
+            msg['To'] = rec_email
+            msg['Subject'] = subject
+            if html:
+                msg.attach(MIMEText(html, 'html'))
+            else:
+                msg.attach(MIMEText(message, 'plain'))
+            smtp.sendmail(GOOGLE_MAIL_APP_EMAIL, rec_email, msg.as_string())
+        except Exception as e:
+            print(f"Error sending email to {rec_email}: {e}")
+
+    smtp.quit()
+
+# Check if user password is correct
+def password_is_correct(user_password: str, encoded_password: str) -> bool:
+    return bcrypt.checkpw(user_password.encode('utf-8'), encoded_password.encode('utf-8'))
+
+# Check if user is admin
+async def is_user_admin(request: Request, access_token: str) -> bool | None:
+    try:
+        token_data = decode_token(access_token)
+        user_id = token_data.get('user_id')
+        user = await request.app.mongodb['users'].find_one({"user_id": user_id})
+        if user is None:
+            return None
+        return user['role'] == 'admin'
+    except Exception as e:
+        return None
