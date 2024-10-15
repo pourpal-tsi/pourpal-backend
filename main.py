@@ -1217,6 +1217,12 @@ async def get_profile(request: Request, authorization: str = Header(None)):
     }
     
     return JSONResponse(status_code=status.HTTP_200_OK, content=bson_to_json(bson_user_data))
-    
+
+# DEV
+@app.get("/my-ip", response_class=JSONResponse)
+async def get_my_ip(request: Request):
+    ip_address, user_agent = get_client_ip_and_agent(request)
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"ip_address": ip_address, "user_agent": user_agent, "headers": dict(request.headers)})
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
