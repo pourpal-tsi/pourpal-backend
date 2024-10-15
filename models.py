@@ -87,6 +87,7 @@ class Item(BaseModel):
 
 class UserAuthorization(BaseModel):
     ip_address: str | None = None
+    user_agent: str | None = None
     timestamp: datetime
 
 

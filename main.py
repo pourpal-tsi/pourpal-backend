@@ -19,7 +19,7 @@ from math import ceil
 
 from models import Item, Money, Volume, Brand, BeverageType, UserAdmin, UserCustomer, UserAuthorization
 
-from service_funcs import bson_to_json, get_client_ip, validate_item_attrs, generate_sku, generate_random_password, \
+from service_funcs import bson_to_json, get_client_ip_and_agent, validate_item_attrs, generate_sku, generate_random_password, \
     encode_token, decode_token, send_emails, password_is_correct, is_user_admin
 
 
@@ -972,9 +972,10 @@ async def login(request: Request, user_data: dict):
     refresh_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
 
     # Update user's authorization timestamps
+    ip_address, user_agent = get_client_ip_and_agent(request)
     await request.app.mongodb['users'].update_one(
         {"user_id": user['user_id']},
-        {"$push": {"authorizations": UserAuthorization(ip_address=get_client_ip(request), timestamp=datetime.now(timezone.utc)).model_dump()}}
+        {"$push": {"authorizations": UserAuthorization(ip_address=ip_address, user_agent=user_agent, timestamp=datetime.now(timezone.utc)).model_dump()}}
     )
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token, "refresh_token": refresh_token})

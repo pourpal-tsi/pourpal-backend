@@ -39,13 +39,14 @@ def generate_sku(type_name: str) -> str:
     random_number = random.randint(1000000, 9999999)
     return f"{type_code}{random_number}"    
 
-def get_client_ip(request: Request) -> str | None:
+def get_client_ip_and_agent(request: Request) -> tuple[str, str] | None:
     x_forwarded_for = request.headers.get("X-Forwarded-For")
+    user_agent = request.headers.get("User-Agent")
     if x_forwarded_for:
         ip_address = x_forwarded_for.split(':')[0]
         port = x_forwarded_for.split(':')[1]
-        return ip_address
-    return None
+        return ip_address, user_agent
+    return None, None
 
 def decimal128_to_str(obj):
     if isinstance(obj, Decimal128):
