@@ -972,10 +972,9 @@ async def login(request: Request, user_data: dict):
     refresh_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
 
     # Update user's authorization timestamps
-    ip_address, user_agent = get_client_ip_and_agent(request)
     await request.app.mongodb['users'].update_one(
         {"user_id": user['user_id']},
-        {"$push": {"authorizations": UserAuthorization(ip_address=ip_address, user_agent=user_agent, timestamp=datetime.now(timezone.utc)).model_dump()}}
+        {"$push": {"authorizations": UserAuthorization(headers=dict(request.headers), timestamp=datetime.now(timezone.utc)).model_dump()}}
     )
 
     return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token, "refresh_token": refresh_token})
@@ -1217,12 +1216,6 @@ async def get_profile(request: Request, authorization: str = Header(None)):
     }
     
     return JSONResponse(status_code=status.HTTP_200_OK, content=bson_to_json(bson_user_data))
-
-# DEV
-@app.get("/my-ip", response_class=JSONResponse)
-async def get_my_ip(request: Request):
-    ip_address, user_agent = get_client_ip_and_agent(request)
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"ip_address": ip_address, "user_agent": user_agent, "headers": dict(request.headers)})
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
