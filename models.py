@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Literal
 from bson import Decimal128
 import bcrypt
+from service_rules import CART_EXPIRATION_TIME_DAYS
 
 
 class Money(BaseModel):
@@ -128,8 +129,9 @@ class Cart(BaseModel):
     cart_items: list[CartItem] = []
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expiration_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=CART_EXPIRATION_TIME_DAYS))
 
 
 class UserCustomer(User):
     role: Literal['customer'] = 'customer'
-    carts: list[Cart] = []
+    carts_ids: list[str] = []

@@ -1,11 +1,11 @@
 import pathlib
-from datetime import datetime, timedelta, timezone
 import passlib
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import Decimal128
 from contextlib import asynccontextmanager
-from config import MONGO_DB, JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_REFRESH_TOKEN_EXPIRE_MINUTES
+from config import MONGO_DB
 
 import uvicorn
 from bson import ObjectId
@@ -15,12 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-from math import ceil
 
-from models import Item, Money, Volume, Brand, BeverageType, UserAdmin, UserCustomer, UserAuthorization
-
-from service_funcs import bson_to_json, get_client_ip_and_agent, validate_item_attrs, generate_sku, generate_random_password, \
-    encode_token, decode_token, send_emails, password_is_correct, is_user_admin
+from server_items import get_items, get_item, create_item, update_item, delete_item
+from server_countries import get_item_countries
+from server_brands import get_item_brands, create_item_brand, update_item_brand, delete_item_brand
+from server_types import get_item_types, create_item_type, update_item_type, delete_item_type
+from server_registration_authentication import login, register_admin, register_customer, refresh_token, get_profile
+from server_cart import get_cart, increment_cart_item, decrement_cart_item, update_cart_item, delete_cart_item
 
 
 @asynccontextmanager
@@ -47,8 +48,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-EMAIL_ENABLED = True
 
 # Endpoints
 
@@ -80,7 +79,7 @@ async def root(request: Request):
 
 # Items
 @app.get("/items", response_class=JSONResponse)
-async def get_items(
+async def api_get_items(
     request: Request,
     search: Optional[str] = Query(None, description="Search items by title (case-insensitive, substring match)"),
     types: Optional[str] = Query(None, description="Filter by beverage types (comma-separated)"),
@@ -174,81 +173,10 @@ async def get_items(
         - asc
         - desc
     """
-    query = {}
-
-    if search:
-        query["title"] = {"$regex": search, "$options": "i"}
-
-    if types:
-        type_list = [t.strip() for t in types.split(',')]
-        query["type_id"] = {"$in": type_list}
-        print(type_list)
-        print(query["type_id"])
-
-    if countries:
-        country_list = [c.strip() for c in countries.split(',')]
-        query["origin_country_code"] = {"$in": country_list}
-
-    if brands:
-        brand_list = [b.strip() for b in brands.split(',')]
-        query["brand_id"] = {"$in": brand_list}
-
-    if min_price is not None or max_price is not None:
-        price_query = {}
-        if min_price is not None:
-            price_query["$gte"] = Decimal128(str(min_price))
-        if max_price is not None:
-            price_query["$lte"] = Decimal128(str(max_price))
-        query["price.amount"] = price_query
-
-    # Sorting logic
-    sort_fields = {
-        "sku": "sku",
-        "title": "title",
-        "type": "type_name",
-        "brand": "brand_name",
-        "country": "origin_country_name",
-        "quantity": "quantity",
-        "price": "price.amount"
-    }
-
-    sort_query = []
-    if sort_by and sort_by in sort_fields:
-        sort_field = sort_fields[sort_by]
-        sort_direction = 1 if sort_order.lower() == "asc" else -1 if sort_order.lower() == "desc" else None
-        if sort_direction is not None:
-            sort_query = [(sort_field, sort_direction)]
-
-    # Count total matching items
-    total_count = await request.app.mongodb['items'].count_documents(query)
-
-    # Calculate pagination metadata
-    total_pages = ceil(total_count / page_size)
-    skip = (page_number - 1) * page_size
-
-    # Fetch paginated items with sorting
-    cursor = request.app.mongodb['items'].find(query, {'_id': 0})
-    if sort_query:
-        cursor = cursor.sort(sort_query)
-    items = await cursor.skip(skip).limit(page_size).to_list(length=None)
-
-    items = bson_to_json(items)
-    
-    # Prepare pagination metadata
-    paging = {
-        "count": len(items),
-        "page_size": page_size,
-        "page_number": page_number,
-        "total_count": total_count,
-        "total_pages": total_pages,
-        "first_page": page_number == 1,
-        "last_page": page_number == total_pages
-    }
-
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items, "paging": paging})
+    return await get_items(request, search, types, countries, brands, min_price, max_price, sort_by, sort_order, page_size, page_number)
 
 @app.get("/items/{item_id}", response_class=JSONResponse)
-async def get_item(request: Request, item_id: str = Path(..., title="The ID of the item to retrieve")):
+async def api_get_item(request: Request, item_id: str = Path(..., title="The ID of the item to retrieve")):
     """
     Retrieve a specific item by its ID.
 
@@ -296,12 +224,10 @@ async def get_item(request: Request, item_id: str = Path(..., title="The ID of t
         }
         ```
     """
-    item = await request.app.mongodb['items'].find_one({"item_id": item_id}, {'_id': 0})
-    item = bson_to_json(item) if item else None
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"item": item})
+    return await get_item(request, item_id)
 
 @app.post("/items", response_class=JSONResponse)
-async def create_item(request: Request, item: dict, authorization: str = Header(None)):
+async def api_create_item(request: Request, item: dict, authorization: str = Header(None)):
     """
     Create a new item. Only accessible by authenticated admin users.
 
@@ -348,46 +274,10 @@ async def create_item(request: Request, item: dict, authorization: str = Header(
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-    
-    is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
-    if not is_valid:
-        return validation_response
-    
-    try:
-        new_item = Item(
-            sku=generate_sku(type_name=valid_type['type']),
-            title=item['title'],
-            image_url=item['image_url'],
-            description=item['description'],
-            type_id=valid_type['type_id'],
-            type_name=valid_type['type'],
-            price=Money(amount=Decimal128(item['price']['amount']), currency=item['price']['currency']),
-            volume=Volume(amount=Decimal128(item['volume']['amount']), unit=item['volume']['unit']),
-            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']['amount']), unit=item['alcohol_volume']['unit']),
-            quantity=item['quantity'],
-            origin_country_code=valid_country['code'],
-            origin_country_name=valid_country['name'],
-            brand_id=valid_brand['brand_id'],
-            brand_name=valid_brand['brand']
-        )       
-    except Exception as e:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": str(e)})
-
-    result = await request.app.mongodb['items'].insert_one(new_item.model_dump())
-    if result.inserted_id:
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Item created successfully", "item_id": new_item.item_id})
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create item"})
+    return await create_item(request, item, authorization)
 
 @app.put("/items/{item_id}", response_class=JSONResponse)
-async def update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update"), authorization: str = Header(None)):
+async def api_update_item(request: Request, item: dict, item_id: str = Path(..., title="The ID of the item to update"), authorization: str = Header(None)):
     """
     Update an existing item. Only accessible by authenticated admin users.
 
@@ -434,53 +324,10 @@ async def update_item(request: Request, item: dict, item_id: str = Path(..., tit
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    is_valid, validation_response, valid_type, valid_brand, valid_country = await validate_item_attrs(request, item)
-    if not is_valid:
-        return validation_response
-
-    try:    
-        db_item = await request.app.mongodb['items'].find_one({"item_id": item_id}, {'_id': 0})
-
-        updated_item = Item(
-            sku=db_item['sku'],
-            title=item['title'],
-            image_url=item['image_url'],
-            description=item['description'],
-            type_id=valid_type['type_id'],
-            type_name=valid_type['type'],
-            price=Money(amount=Decimal128(item['price']['amount']), currency=item['price']['currency']),
-            volume=Volume(amount=Decimal128(item['volume']['amount']), unit=item['volume']['unit']),
-            alcohol_volume=Volume(amount=Decimal128(item['alcohol_volume']['amount']), unit=item['alcohol_volume']['unit']),
-            quantity=item['quantity'],
-            origin_country_code=valid_country['code'],
-            origin_country_name=valid_country['name'],
-            brand_id=valid_brand['brand_id'],
-            brand_name=valid_brand['brand'],
-            updated_at=datetime.now(timezone.utc),
-            added_at=db_item['added_at']
-        )            
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"message": str(e)})
-
-    result = await request.app.mongodb['items'].update_one(
-        {"item_id": item_id},
-        {"$set": updated_item.model_dump(exclude={"item_id"})}
-    )
-    if result.modified_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item updated successfully"})
-    return JSONResponse(status_code=404, content={"message": "Item not found"})
+    return await update_item(request, item, item_id, authorization)
 
 @app.delete("/items/{item_id}", response_class=JSONResponse)
-async def delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete"), authorization: str = Header(None)):
+async def api_delete_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete"), authorization: str = Header(None)):
     """
     Delete an item by its ID. Only accessible by authenticated admin users.
 
@@ -503,23 +350,11 @@ async def delete_item(request: Request, item_id: str = Path(..., title="The ID o
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    result = await request.app.mongodb['items'].delete_one({"item_id": item_id})
-    if result.deleted_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Item deleted successfully"})
-    return JSONResponse(status_code=404, content={"message": "Item not found"})
+    return await delete_item(request, item_id, authorization)
 
 # Item Countries
 @app.get("/item-countries", response_class=JSONResponse)
-async def get_item_countries(request: Request):
+async def api_get_item_countries(request: Request):
     """
     Retrieve all available item countries, sorted alphabetically by country name.
 
@@ -558,13 +393,11 @@ async def get_item_countries(request: Request):
         }
         ```
     """
-    countries = await request.app.mongodb['countries'].find({}, {'_id': 0, 'added_at': 0}).sort("name", 1).to_list(length=None)
-    countries = bson_to_json(countries)
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"countries": countries})
+    return await get_item_countries(request)
 
 # Item Brands
 @app.get("/item-brands", response_class=JSONResponse)
-async def get_item_brands(request: Request):
+async def api_get_item_brands(request: Request):
     """
     Retrieve all available item brands, sorted alphabetically by brand name.
 
@@ -597,12 +430,10 @@ async def get_item_brands(request: Request):
         }
         ```
     """
-    brands = await request.app.mongodb['beverage_brands'].find({}, {'_id': 0, 'added_at': 0}).sort("brand", 1).to_list(length=None)
-    brands = bson_to_json(brands)
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"brands": brands})
+    return await get_item_brands(request)
 
 @app.post("/item-brands", response_class=JSONResponse)
-async def create_item_brand(request: Request, brand: dict, authorization: str = Header(None)):
+async def api_create_item_brand(request: Request, brand: dict, authorization: str = Header(None)):
     """
     Create a new item brand. Only accessible by authenticated admin users.
 
@@ -631,30 +462,10 @@ async def create_item_brand(request: Request, brand: dict, authorization: str = 
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    if 'brand' not in brand or not brand['brand']:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
-
-    existing_brand = await request.app.mongodb['beverage_brands'].find_one({"brand": brand['brand']})
-    if existing_brand:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Brand already exists"})
-
-    new_brand = Brand(brand=brand['brand'])
-    result = await request.app.mongodb['beverage_brands'].insert_one(new_brand.model_dump())
-    if result.inserted_id:
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Brand created successfully", "brand_id": new_brand.brand_id})
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create brand"})
+    return await create_item_brand(request, brand, authorization)
 
 @app.put("/item-brands/{brand_id}", response_class=JSONResponse)
-async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(..., title="The ID of the brand to update"), authorization: str = Header(None)):
+async def api_update_item_brand(request: Request, brand: dict, brand_id: str = Path(..., title="The ID of the brand to update"), authorization: str = Header(None)):
     """
     Update an existing item brand. Only accessible by authenticated admin users.
 
@@ -683,32 +494,10 @@ async def update_item_brand(request: Request, brand: dict, brand_id: str = Path(
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    if 'brand' not in brand or not brand['brand']:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Brand name is required"})
-
-    existing_brand = await request.app.mongodb['beverage_brands'].find_one({"brand": brand['brand'], "brand_id": {"$ne": brand_id}})
-    if existing_brand:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Brand name already exists"})
-
-    result = await request.app.mongodb['beverage_brands'].update_one(
-        {"brand_id": brand_id},
-        {"$set": {"brand": brand['brand']}}
-    )
-    if result.modified_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Brand updated successfully"})
-    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
+    return await update_item_brand(request, brand, brand_id, authorization)
 
 @app.delete("/item-brands/{brand_id}", response_class=JSONResponse)
-async def delete_item_brand(request: Request, brand_id: str = Path(..., title="The ID of the brand to delete"), authorization: str = Header(None)):
+async def api_delete_item_brand(request: Request, brand_id: str = Path(..., title="The ID of the brand to delete"), authorization: str = Header(None)):
     """
     Delete an item brand by its ID. Only accessible by authenticated admin users.
 
@@ -731,23 +520,11 @@ async def delete_item_brand(request: Request, brand_id: str = Path(..., title="T
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    result = await request.app.mongodb['beverage_brands'].delete_one({"brand_id": brand_id})
-    if result.deleted_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Brand deleted successfully"})
-    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Brand not found"})
+    return await delete_item_brand(request, brand_id, authorization)
 
 # Item Types
 @app.get("/item-types", response_class=JSONResponse)
-async def get_item_types(request: Request):
+async def api_get_item_types(request: Request):
     """
     Retrieve all available item types, sorted alphabetically by type name.
 
@@ -780,12 +557,10 @@ async def get_item_types(request: Request):
         }
         ```
     """
-    types = await request.app.mongodb['beverage_types'].find({}, {'_id': 0, 'added_at': 0}).sort("type", 1).to_list(length=None)
-    types = bson_to_json(types)
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"types": types})
+    return await get_item_types(request)
 
 @app.post("/item-types", response_class=JSONResponse)
-async def create_item_type(request: Request, type: dict, authorization: str = Header(None)):
+async def api_create_item_type(request: Request, type: dict, authorization: str = Header(None)):
     """
     Create a new item type. Only accessible by authenticated admin users.
 
@@ -814,30 +589,10 @@ async def create_item_type(request: Request, type: dict, authorization: str = He
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    if 'type' not in type or not type['type']:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
-
-    existing_type = await request.app.mongodb['beverage_types'].find_one({"type": type['type']})
-    if existing_type:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Type already exists"})
-
-    new_type = BeverageType(type=type['type'])
-    result = await request.app.mongodb['beverage_types'].insert_one(new_type.model_dump())
-    if result.inserted_id:
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Type created successfully", "type_id": new_type.type_id})
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to create type"})
+    return await create_item_type(request, type, authorization)
 
 @app.put("/item-types/{type_id}", response_class=JSONResponse)
-async def update_item_type(request: Request, type: dict, type_id: str = Path(..., title="The ID of the type to update"), authorization: str = Header(None)):
+async def api_update_item_type(request: Request, type: dict, type_id: str = Path(..., title="The ID of the type to update"), authorization: str = Header(None)):
     """
     Update an existing item type. Only accessible by authenticated admin users.
 
@@ -866,32 +621,10 @@ async def update_item_type(request: Request, type: dict, type_id: str = Path(...
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    if 'type' not in type or not type['type']:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Type name is required"})
-
-    existing_type = await request.app.mongodb['beverage_types'].find_one({"type": type['type'], "type_id": {"$ne": type_id}})
-    if existing_type:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Type name already exists"})
-
-    result = await request.app.mongodb['beverage_types'].update_one(
-        {"type_id": type_id},
-        {"$set": {"type": type['type']}}
-    )
-    if result.modified_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Type updated successfully"})
-    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
+    return await update_item_type(request, type, type_id, authorization)
 
 @app.delete("/item-types/{type_id}", response_class=JSONResponse)
-async def delete_item_type(request: Request, type_id: str = Path(..., title="The ID of the type to delete"), authorization: str = Header(None)):
+async def api_delete_item_type(request: Request, type_id: str = Path(..., title="The ID of the type to delete"), authorization: str = Header(None)):
     """
     Delete an item type by its ID. Only accessible by authenticated admin users.
 
@@ -914,23 +647,11 @@ async def delete_item_type(request: Request, type_id: str = Path(..., title="The
         }
         ```
     """
-    # Authentication and authorization check
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    is_admin = await is_user_admin(request, access_token)
-    if not is_admin:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Access denied"})
-
-    result = await request.app.mongodb['beverage_types'].delete_one({"type_id": type_id})
-    if result.deleted_count:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Type deleted successfully"})
-    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Type not found"})
+    return await delete_item_type(request, type_id, authorization)
 
 # Registration and Authentication
 @app.post("/auth/login", response_class=JSONResponse)  # Returns two tokens: access and refresh
-async def login(request: Request, user_data: dict):
+async def api_login(request: Request, user_data: dict):
     """
     Login a user.
 
@@ -958,29 +679,10 @@ async def login(request: Request, user_data: dict):
         }
         ```
     """
-    # Check if email and password are provided
-    if 'email' not in user_data or 'password' not in user_data:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email and password are required"})
-
-    # Check if user exists and password is correct
-    user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
-    if not user or not password_is_correct(user_password=user_data['password'], encoded_password=user['encoded_password']):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid email or password"})
-
-    # Generate tokens
-    access_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
-
-    # Update user's authorization timestamps
-    await request.app.mongodb['users'].update_one(
-        {"user_id": user['user_id']},
-        {"$push": {"authorizations": UserAuthorization(headers=dict(request.headers), timestamp=datetime.now(timezone.utc)).model_dump()}}
-    )
-
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token, "refresh_token": refresh_token})
+    return await login(request, user_data)
     
 @app.post("/auth/register/admin", response_class=JSONResponse)
-async def register_admin(request: Request, user_data: dict, authorization: str = Header(None)):
+async def api_register_admin(request: Request, user_data: dict, authorization: str = Header(None)):
     """
     Register a new admin user.
 
@@ -1009,48 +711,10 @@ async def register_admin(request: Request, user_data: dict, authorization: str =
         }
         ```
     """
-    # Check if the caller is an admin
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
-
-    access_token = authorization.split(" ")[1]
-    token_data = decode_token(access_token)
-    caller_user_id = token_data.get('user_id') if token_data else None
-    if caller_user_id:
-        caller_user = await request.app.mongodb['users'].find_one({"user_id": caller_user_id})
-        if caller_user['role'] != 'admin':
-            return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"message": "Caller user is not an admin"})
-    else:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid access token"})
-
-    # Check if request body has email
-    if 'email' not in user_data:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email is required"})
-    
-    # Check if email is already in use
-    existing_user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
-    if existing_user:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Email already in use"})
-        
-    # Create new admin user
-    password = generate_random_password(length=8)
-    user = UserAdmin(email=user_data['email'], password=password)
-    result = await request.app.mongodb['users'].insert_one(user.model_dump())
-    if result.inserted_id:
-        if EMAIL_ENABLED:
-            # Send email to the new admin user
-            subject = "Admin Registration Successful"
-            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as an administrator of the PourPal platform.
-                        <br>Your password is: <b>{password}</b><br><small style="color: gray;">Please change your password after logging in.</small><br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
-            try:
-                await send_emails([user.email], subject, html=message)
-            except Exception as e:
-                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Admin registered successfully", "user_id": user.user_id})
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register admin"})
+    return await register_admin(request, user_data, authorization)
 
 @app.post("/auth/register/customer", response_class=JSONResponse)
-async def register_customer(request: Request, user_data: dict):
+async def api_register_customer(request: Request, user_data: dict):
     """
     Register a new customer user.
 
@@ -1078,33 +742,10 @@ async def register_customer(request: Request, user_data: dict):
         }
         ```
     """
-    # Check if request body has email and password
-    if 'email' not in user_data or 'password' not in user_data:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Email and password are required"})
-    
-    # Check if email is already in use
-    existing_user = await request.app.mongodb['users'].find_one({"email": user_data['email']})
-    if existing_user:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"message": "Email already in use"})
-    
-    # Create new customer user
-    user = UserCustomer(email=user_data['email'], password=user_data['password'])
-    result = await request.app.mongodb['users'].insert_one(user.model_dump())
-    if result.inserted_id:
-        if EMAIL_ENABLED:
-            # Send email to the new customer user
-            subject = "Customer Registration Successful"
-            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as a customer of the PourPal platform.
-                        <br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
-            try:
-                await send_emails([user.email], subject, html=message)
-            except Exception as e:
-                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Customer registered successfully", "user_id": user.user_id})
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register customer"})
+    return await register_customer(request, user_data)
 
 @app.post("/auth/refresh", response_class=JSONResponse)
-async def refresh_token(request: Request, authorization: str = Header(None)):
+async def api_refresh_token(request: Request, authorization: str = Header(None)):
     """
     Refresh the access token using a valid refresh token.
 
@@ -1127,38 +768,10 @@ async def refresh_token(request: Request, authorization: str = Header(None)):
         }
         ```
     """
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid authorization header"})
-
-    refresh_token = authorization.split(" ")[1]
-    
-    try:
-        # Decode and validate the refresh token
-        token_data = decode_token(refresh_token)
-        user_id = token_data.get('user_id')
-        
-        if not user_id:
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid refresh token"})
-        
-        # Check if the user exists
-        user = await request.app.mongodb['users'].find_one({"user_id": user_id})
-        if not user:
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "User not found"})
-        
-        # Generate new tokens
-        new_access_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-        new_refresh_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
-        
-        return JSONResponse(status_code=status.HTTP_200_OK, content={
-            "access_token": new_access_token,
-            "refresh_token": new_refresh_token
-        })
-    
-    except Exception as e:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": f"Invalid refresh token: {str(e)}"})
+    return await refresh_token(request, authorization)
 
 @app.get("/auth/profile", response_class=JSONResponse)
-async def get_profile(request: Request, authorization: str = Header(None)):
+async def api_get_profile(request: Request, authorization: str = Header(None)):
     """
     Get the profile details of the logged-in user.
 
@@ -1185,37 +798,28 @@ async def get_profile(request: Request, authorization: str = Header(None)):
         }
         ```
     """
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid authorization header"})
+    return await get_profile(request, authorization)
 
-    access_token = authorization.split(" ")[1]
-    
-    # Decode the access token
-    try:
-        decoded_token = decode_token(access_token)
-    except Exception as e:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": f"Invalid access token: {str(e)}"})
+# Cart
+@app.get("/cart", response_class=JSONResponse)
+async def api_get_cart(request: Request, authorization: str = Header(None)):
+    return await get_cart(request, authorization)
 
-    # Get the user ID from the access token
-    user_id = decoded_token.get('user_id')
-    if not user_id:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid access token"})
+@app.post("/cart/{item_id}/increment", response_class=JSONResponse)
+async def api_increment_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to increment"), authorization: str = Header(None)):
+    return await increment_cart_item(request, item_id, authorization)
 
-    # Get the user details from the database
-    user = await request.app.mongodb['users'].find_one({"user_id": user_id})
-    if not user:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "User not found"})
+@app.post("/cart/{item_id}/decrement", response_class=JSONResponse)
+async def api_decrement_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to decrement"), authorization: str = Header(None)):
+    return await decrement_cart_item(request, item_id, authorization)
 
-    bson_user_data = {
-        "email": user['email'],
-        "role": user['role'],
-        "full_name": user['full_name'],
-        "is_active": user['is_active'],
-        "updated_at": user['updated_at'],
-        "created_at": user['created_at']
-    }
-    
-    return JSONResponse(status_code=status.HTTP_200_OK, content=bson_to_json(bson_user_data))
+@app.put("/cart/{item_id}", response_class=JSONResponse)
+async def api_update_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to update"), quantity: int = Query(..., title="The new quantity of the item"), authorization: str = Header(None)):
+    return await update_cart_item(request, item_id, quantity, authorization)
+
+@app.delete("/cart/{item_id}", response_class=JSONResponse)
+async def api_delete_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete"), authorization: str = Header(None)):
+    return await delete_cart_item(request, item_id, authorization)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
