@@ -20,7 +20,7 @@ from server_items import get_items, get_item, create_item, update_item, delete_i
 from server_countries import get_item_countries
 from server_brands import get_item_brands, create_item_brand, update_item_brand, delete_item_brand
 from server_types import get_item_types, create_item_type, update_item_type, delete_item_type
-from server_registration_authentication import login, register_admin, register_customer, refresh_token, get_profile
+from server_registration_authentication import login, register_admin, register_customer, get_profile
 from server_cart import get_cart, increment_cart_item, decrement_cart_item, update_cart_item, delete_cart_item
 
 
@@ -674,8 +674,7 @@ async def api_login(request: Request, user_data: dict):
 
         Response:
         {
-            "access_token": "new_access_token",
-            "refresh_token": "new_refresh_token"
+            "access_token": "new_access_token"
         }
         ```
     """
@@ -743,32 +742,6 @@ async def api_register_customer(request: Request, user_data: dict):
         ```
     """
     return await register_customer(request, user_data)
-
-@app.post("/auth/refresh", response_class=JSONResponse)
-async def api_refresh_token(request: Request, authorization: str = Header(None)):
-    """
-    Refresh the access token using a valid refresh token.
-
-    Args:
-        request (Request): The incoming request object.
-        authorization (str): The Authorization header containing the refresh token.
-
-    Returns:
-        JSONResponse: A JSON response containing new access and refresh tokens.
-
-    Example:
-        ```
-        POST /auth/refresh
-        Authorization: Bearer existing_refresh_token
-
-        Response:
-        {
-            "access_token": "new_access_token",
-            "refresh_token": "new_refresh_token"
-        }
-        ```
-    """
-    return await refresh_token(request, authorization)
 
 @app.get("/auth/profile", response_class=JSONResponse)
 async def api_get_profile(request: Request, authorization: str = Header(None)):

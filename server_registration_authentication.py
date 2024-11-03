@@ -1,6 +1,6 @@
 
 from datetime import datetime, timedelta, timezone
-from config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_REFRESH_TOKEN_EXPIRE_MINUTES
+from config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
 
 from fastapi import Request, status, Header
 from fastapi.responses import JSONResponse
@@ -23,7 +23,6 @@ async def login(request: Request, user_data: dict):
 
     # Generate tokens
     access_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token = encode_token(data={'user_id': user['user_id']}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
 
     # Update user's authorization timestamps
     await request.app.mongodb['users'].update_one(
@@ -31,7 +30,7 @@ async def login(request: Request, user_data: dict):
         {"$push": {"authorizations": UserAuthorization(headers=dict(request.headers), timestamp=datetime.now(timezone.utc)).model_dump()}}
     )
 
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token, "refresh_token": refresh_token})
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"access_token": access_token})
     
 async def register_admin(request: Request, user_data: dict, authorization: str = Header(None)):
     # Check if the caller is an admin
@@ -99,37 +98,6 @@ async def register_customer(request: Request, user_data: dict):
                 return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
         return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Customer registered successfully", "user_id": user.user_id})
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register customer"})
-
-async def refresh_token(request: Request, authorization: str = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"message": "Invalid authorization header"})
-
-    refresh_token = authorization.split(" ")[1]
-    
-    try:
-        # Decode and validate the refresh token
-        token_data = decode_token(refresh_token)
-        user_id = token_data.get('user_id')
-        
-        if not user_id:
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "Invalid refresh token"})
-        
-        # Check if the user exists
-        user = await request.app.mongodb['users'].find_one({"user_id": user_id})
-        if not user:
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": "User not found"})
-        
-        # Generate new tokens
-        new_access_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-        new_refresh_token = encode_token(data={'user_id': user_id}, expires_delta_minutes=JWT_REFRESH_TOKEN_EXPIRE_MINUTES)
-        
-        return JSONResponse(status_code=status.HTTP_200_OK, content={
-            "access_token": new_access_token,
-            "refresh_token": new_refresh_token
-        })
-    
-    except Exception as e:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"message": f"Invalid refresh token: {str(e)}"})
 
 async def get_profile(request: Request, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
