@@ -818,7 +818,7 @@ async def api_get_cart(request: Request, authorization: str = Header(None)):
 @app.post("/cart/{item_id}/increment", response_class=JSONResponse)
 async def api_increment_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to increment"), authorization: str = Header(None)):
     """
-    Increment the quantity of an item in the cart by 1.
+    Increment the quantity of an item in the cart by 1. If the item is not in the cart, it will be added from the catalogue.
 
     Args:
         request (Request): The incoming request object.
@@ -847,7 +847,7 @@ async def api_increment_cart_item(request: Request, item_id: str = Path(..., tit
 @app.post("/cart/{item_id}/decrement", response_class=JSONResponse)
 async def api_decrement_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to decrement"), authorization: str = Header(None)):
     """
-    Decrement the quantity of an item in the cart by 1. Minimum quantity is 1. Otherwise, use delete_cart_item.
+    Decrement the quantity of an item in the cart by 1. If the quantity is 0, the item will be removed from the cart.
 
     Args:
         request (Request): The incoming request object.
@@ -876,7 +876,7 @@ async def api_decrement_cart_item(request: Request, item_id: str = Path(..., tit
 @app.put("/cart/{item_id}", response_class=JSONResponse)
 async def api_update_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to update"), quantity: int = Query(..., title="The new quantity of the item"), authorization: str = Header(None)):
     """
-    Update the quantity of an item in the cart or add a new item if it doesn't exist.
+    Update the quantity of an item in the cart.
 
     Args:
         request (Request): The incoming request object.
