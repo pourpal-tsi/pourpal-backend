@@ -122,6 +122,8 @@ class UserAdmin(User):
 class CartItem(BaseModel):
     item_id: str
     quantity: int
+    unit_price: Money
+    total_price: Money
 
 
 class Cart(BaseModel):

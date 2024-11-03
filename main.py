@@ -776,22 +776,173 @@ async def api_get_profile(request: Request, authorization: str = Header(None)):
 # Cart
 @app.get("/cart", response_class=JSONResponse)
 async def api_get_cart(request: Request, authorization: str = Header(None)):
+    """
+    Retrieve the current user's cart.
+
+    Args:
+        request (Request): The incoming request object.
+        authorization (str): The cart ID in the Authorization header.
+
+    Returns:
+        JSONResponse: A JSON response containing the cart details.
+
+    Example:
+        ```
+        GET /cart
+        Authorization: Bearer <access_token?> <cart_id>
+
+        Response:
+        {
+            "new_cart": false,
+            "cart_id": "550e8400-e29b-41d4-a716-446655440000",
+            "cart_items": [
+                {
+                    "item_id": "660e8400-e29b-41d4-a716-446655440001",
+                    "quantity": 2,
+                    "unit_price": {
+                        "amount": "45.99",
+                        "currency": "€"
+                    },
+                    "total_price": {
+                        "amount": "91.98",
+                        "currency": "€"
+                    }
+                }
+            ],
+            "total_cart_price": 91.98
+        }
+        ```
+    """
     return await get_cart(request, authorization)
 
 @app.post("/cart/{item_id}/increment", response_class=JSONResponse)
 async def api_increment_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to increment"), authorization: str = Header(None)):
+    """
+    Increment the quantity of an item in the cart by 1.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to increment.
+        authorization (str): The cart ID in the Authorization header.
+
+    Returns:
+        JSONResponse: A JSON response containing the updated cart details.
+
+    Example:
+        ```
+        POST /cart/660e8400-e29b-41d4-a716-446655440001/increment
+        Authorization: Bearer <access_token?> <cart_id>
+
+        Response:
+        {
+            "new_cart": false,
+            "cart_id": "550e8400-e29b-41d4-a716-446655440000",
+            "cart_items": [...],
+            "total_cart_price": 137.97
+        }
+        ```
+    """
     return await increment_cart_item(request, item_id, authorization)
 
 @app.post("/cart/{item_id}/decrement", response_class=JSONResponse)
 async def api_decrement_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to decrement"), authorization: str = Header(None)):
+    """
+    Decrement the quantity of an item in the cart by 1. Minimum quantity is 1. Otherwise, use delete_cart_item.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to decrement.
+        authorization (str): The cart ID in the Authorization header.
+
+    Returns:
+        JSONResponse: A JSON response containing the updated cart details.
+
+    Example:
+        ```
+        POST /cart/660e8400-e29b-41d4-a716-446655440001/decrement
+        Authorization: Bearer <access_token?> <cart_id>
+
+        Response:
+        {
+            "new_cart": false,
+            "cart_id": "550e8400-e29b-41d4-a716-446655440000",
+            "cart_items": [...],
+            "total_cart_price": 45.99
+        }
+        ```
+    """
     return await decrement_cart_item(request, item_id, authorization)
 
 @app.put("/cart/{item_id}", response_class=JSONResponse)
 async def api_update_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to update"), quantity: int = Query(..., title="The new quantity of the item"), authorization: str = Header(None)):
+    """
+    Update the quantity of an item in the cart or add a new item if it doesn't exist.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to update.
+        quantity (int): The new quantity to set.
+        authorization (str): The cart ID in the Authorization header.
+
+    Returns:
+        JSONResponse: A JSON response containing the updated cart details.
+
+    Example:
+        ```
+        PUT /cart/660e8400-e29b-41d4-a716-446655440001?quantity=5
+        Authorization: Bearer <access_token?> <cart_id>
+
+        Response:
+        {
+            "new_cart": false,
+            "cart_id": "550e8400-e29b-41d4-a716-446655440000",
+            "cart_items": [
+                {
+                    "item_id": "660e8400-e29b-41d4-a716-446655440001",
+                    "quantity": 5,
+                    "unit_price": {
+                        "amount": "45.99",
+                        "currency": "€"
+                    },
+                    "total_price": {
+                        "amount": "229.95",
+                        "currency": "€"
+                    }
+                }
+            ],
+            "total_cart_price": 229.95
+        }
+        ```
+    """
     return await update_cart_item(request, item_id, quantity, authorization)
 
 @app.delete("/cart/{item_id}", response_class=JSONResponse)
 async def api_delete_cart_item(request: Request, item_id: str = Path(..., title="The ID of the item to delete"), authorization: str = Header(None)):
+    """
+    Remove an item from the cart completely.
+
+    Args:
+        request (Request): The incoming request object.
+        item_id (str): The ID of the item to delete.
+        authorization (str): The cart ID in the Authorization header.
+
+    Returns:
+        JSONResponse: A JSON response containing the updated cart details.
+
+    Example:
+        ```
+        DELETE /cart/660e8400-e29b-41d4-a716-446655440001
+        Authorization: Bearer <access_token?> <cart_id>
+
+        Response:
+        {
+            "new_cart": false,
+            "cart_id": "550e8400-e29b-41d4-a716-446655440000",
+            "cart_items": [],
+            "total_cart_price": 0
+        }
+        ```
+    """
     return await delete_cart_item(request, item_id, authorization)
 
 if __name__ == "__main__":
