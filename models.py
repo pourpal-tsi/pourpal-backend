@@ -134,6 +134,25 @@ class Cart(BaseModel):
     expiration_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=CART_EXPIRATION_TIME_DAYS))
 
 
+class DeliveryInformation(BaseModel):
+    recipient_name: str
+    recipient_phone: str
+    recipient_city: str
+    recipient_street_address: str
+    comment: str | None = None
+
+
+class Order(BaseModel):
+    order_id: str = Field(default_factory=lambda: str(uuid4()))
+    order_number: str  # Order number consisting of 9 digits like '000000001'
+    user_id: str | None = None
+    status: Literal['pending', 'completed', 'cancelled', 'returned'] = 'pending'
+    delivery_information: DeliveryInformation | None = None
+    order_items: list[CartItem] = []
+    total_price: Money
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+
 class UserCustomer(User):
     role: Literal['customer'] = 'customer'
     carts_ids: list[str] = []

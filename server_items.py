@@ -31,8 +31,6 @@ async def get_items(
     if types:
         type_list = [t.strip() for t in types.split(',')]
         query["type_id"] = {"$in": type_list}
-        print(type_list)
-        print(query["type_id"])
 
     if countries:
         country_list = [c.strip() for c in countries.split(',')]

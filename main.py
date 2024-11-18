@@ -22,6 +22,7 @@ from server_brands import get_item_brands, create_item_brand, update_item_brand,
 from server_types import get_item_types, create_item_type, update_item_type, delete_item_type
 from server_registration_authentication import login, register_admin, register_customer, get_profile
 from server_cart import get_cart, increment_cart_item, decrement_cart_item, update_cart_item, delete_cart_item
+from server_order import create_order, get_all_orders, get_user_orders
 
 
 @asynccontextmanager
@@ -944,6 +945,171 @@ async def api_delete_cart_item(request: Request, item_id: str = Path(..., title=
         ```
     """
     return await delete_cart_item(request, item_id, authorization)
+
+# Orders
+@app.post("/orders", response_class=JSONResponse)
+async def api_create_order(request: Request, delivery_info: object, authorization: str = Header(None)):
+    """
+    Create a new order from the current cart. Requires authentication.
+
+    Args:
+        request (Request): The incoming request object.
+        delivery_info (object): The delivery information for the order.
+        authorization (str): The Authorization header containing the access token and cart ID.
+
+    Returns:
+        JSONResponse: A JSON response containing the created order details.
+
+    Example:
+        ```
+        POST /orders
+        Content-Type: application/json
+        Authorization: Bearer <access_token> <cart_id>
+
+        {
+            "recipient_name": "John Doe",
+            "recipient_phone": "+1234567890",
+            "recipient_city": "New York",
+            "recipient_street_address": "123 Main St",
+            "comment": "Please deliver in the evening"
+        }
+
+        Response:
+        {
+            "order_id": "880e8400-e29b-41d4-a716-446655440003",
+            "order_number": "000000001",
+            "user_id": "770e8400-e29b-41d4-a716-446655440002",
+            "status": "pending",
+            "delivery_information": {
+                "recipient_name": "John Doe",
+                "recipient_phone": "+1234567890",
+                "recipient_city": "New York",
+                "recipient_street_address": "123 Main St",
+                "comment": "Please deliver in the evening"
+            },
+            "order_items": [...],
+            "total_price": {
+                "amount": "91.98",
+                "currency": "€"
+            },
+            "created_at": "2024-02-14T12:00:00Z"
+        }
+        ```
+    """
+    return await create_order(request, delivery_info, authorization)
+
+@app.get("/orders", response_class=JSONResponse)
+async def api_get_all_orders(
+    request: Request,
+    page_size: int = Query(25, ge=1, le=100),
+    page_number: int = Query(1, ge=1),
+    authorization: str = Header(None)
+):
+    """
+    Retrieve all orders (admin only). Requires admin authentication.
+
+    Args:
+        request (Request): The incoming request object.
+        page_size (int): Number of orders per page (1-100, default: 25).
+        page_number (int): Page number (>= 1, default: 1).
+        authorization (str): The Authorization header containing the access token.
+
+    Returns:
+        JSONResponse: A JSON response containing the paginated list of orders.
+
+    Example:
+        ```
+        GET /orders?page_size=10&page_number=1
+        Authorization: Bearer <access_token>
+
+        Response:
+        {
+            "orders": [
+                {
+                    "order_id": "880e8400-e29b-41d4-a716-446655440003",
+                    "order_number": "000000001",
+                    "user_id": "770e8400-e29b-41d4-a716-446655440002",
+                    "status": "pending",
+                    "delivery_information": {...},
+                    "order_items": [...],
+                    "total_price": {
+                        "amount": "91.98",
+                        "currency": "€"
+                    },
+                    "created_at": "2024-02-14T12:00:00Z"
+                },
+                // ... more orders ...
+            ],
+            "paging": {
+                "count": 10,
+                "page_size": 10,
+                "page_number": 1,
+                "total_count": 50,
+                "total_pages": 5,
+                "first_page": true,
+                "last_page": false
+            }
+        }
+        ```
+    """
+    return await get_all_orders(request, page_size, page_number, authorization)
+
+@app.get("/auth/profile/orders", response_class=JSONResponse)
+async def api_get_user_orders(
+    request: Request,
+    page_size: int = Query(25, ge=1, le=100),
+    page_number: int = Query(1, ge=1),
+    authorization: str = Header(None)
+):
+    """
+    Retrieve orders for the authenticated user. Requires authentication.
+
+    Args:
+        request (Request): The incoming request object.
+        page_size (int): Number of orders per page (1-100, default: 25).
+        page_number (int): Page number (>= 1, default: 1).
+        authorization (str): The Authorization header containing the access token.
+
+    Returns:
+        JSONResponse: A JSON response containing the paginated list of user's orders.
+
+    Example:
+        ```
+        GET /auth/profile/orders?page_size=10&page_number=1
+        Authorization: Bearer <access_token>
+
+        Response:
+        {
+            "orders": [
+                {
+                    "order_id": "880e8400-e29b-41d4-a716-446655440003",
+                    "order_number": "000000001",
+                    "user_id": "770e8400-e29b-41d4-a716-446655440002",
+                    "status": "pending",
+                    "delivery_information": {...},
+                    "order_items": [...],
+                    "total_price": {
+                        "amount": "91.98",
+                        "currency": "€"
+                    },
+                    "created_at": "2024-02-14T12:00:00Z"
+                },
+                // ... more orders ...
+            ],
+            "paging": {
+                "count": 10,
+                "page_size": 10,
+                "page_number": 1,
+                "total_count": 50,
+                "total_pages": 5,
+                "first_page": true,
+                "last_page": false
+            }
+        }
+        ```
+    """
+    return await get_user_orders(request, page_size, page_number, authorization)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
