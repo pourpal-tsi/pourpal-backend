@@ -18,7 +18,7 @@ async def create_order(request: Request,
     cart_id = authorization.split(" ")[-1] if authorization else None
     if not cart_id:
         raise HTTPException(status_code=400, detail="No cart ID provided")
-
+    
     # Get the cart
     cart = await request.app.mongodb['carts'].find_one({"cart_id": cart_id})
     if not cart or not cart['cart_items']:
@@ -44,7 +44,8 @@ async def create_order(request: Request,
 
     # Get user_id from authorization header
     access_token = authorization.replace("Bearer ", "").split(" ")[0]
-    user_id = decode_token(access_token) if access_token else None
+    access_token_data = decode_token(access_token) if access_token else None
+    user_id = access_token_data.get('user_id') if access_token_data else None
 
     # Create order
     order = Order(
@@ -126,7 +127,8 @@ async def get_user_orders(
 ):
     # Get user_id from session
     access_token = authorization.replace("Bearer ", "").split(" ")[0]
-    user_id = decode_token(access_token) if access_token else None
+    access_token_data = decode_token(access_token) if access_token else None
+    user_id = access_token_data.get('user_id') if access_token_data else None
     user = await request.app.mongodb['users'].find_one({"user_id": user_id}) if user_id else None
     
     if not user:

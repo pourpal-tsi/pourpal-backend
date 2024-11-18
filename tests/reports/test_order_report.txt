@@ -1,0 +1,14 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.3.3, pluggy-1.5.0 -- d:\TSI\4_course\Group Project\pourpal-backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\TSI\4_course\Group Project\pourpal-backend
+configfile: pytest.ini
+plugins: anyio-4.4.0, asyncio-0.24.0, cov-6.0.0
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 3 items
+
+tests/test_order.py::test_create_order PASSED
+tests/test_order.py::test_get_all_orders PASSED
+tests/test_order.py::test_get_user_orders PASSED
+
+============================== 3 passed in 0.67s ==============================

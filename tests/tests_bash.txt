@@ -1,0 +1,7 @@
+pytest tests/test_items.py -v -s > tests/reports/test_items_report.txt
+pytest tests/test_countries.py -v -s > tests/reports/test_countries_report.txt
+pytest tests/test_brands.py -v -s > tests/reports/test_brands_report.txt
+pytest tests/test_types.py -v -s > tests/reports/test_types_report.txt
+pytest tests/test_registration_authentication.py -v -s > tests/reports/test_registration_authentication_report.txt
+pytest tests/test_cart.py -v -s > tests/reports/test_cart_report.txt
+pytest tests/test_order.py -v -s > tests/reports/test_order_report.txt

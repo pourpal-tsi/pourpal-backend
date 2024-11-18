@@ -9,20 +9,24 @@ from config import MONGO_DB
 
 import uvicorn
 from bson import ObjectId
-from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException, Query, Path, Header
+from fastapi import FastAPI, Request, Depends, status, Response, Cookie, Form, HTTPException, Query, Path, Header, Body
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-from server_items import get_items, get_item, create_item, update_item, delete_item
-from server_countries import get_item_countries
-from server_brands import get_item_brands, create_item_brand, update_item_brand, delete_item_brand
-from server_types import get_item_types, create_item_type, update_item_type, delete_item_type
-from server_registration_authentication import login, register_admin, register_customer, get_profile
-from server_cart import get_cart, increment_cart_item, decrement_cart_item, update_cart_item, delete_cart_item
-from server_order import create_order, get_all_orders, get_user_orders
+from server.server_items import get_items, get_item, create_item, update_item, delete_item
+from server.server_countries import get_item_countries
+from server.server_brands import get_item_brands, create_item_brand, update_item_brand, delete_item_brand
+from server.server_types import get_item_types, create_item_type, update_item_type, delete_item_type
+from server.server_registration_authentication import login, register_admin, register_customer, get_profile
+from server.server_cart import get_cart, increment_cart_item, decrement_cart_item, update_cart_item, delete_cart_item
+from server.server_order import create_order, get_all_orders, get_user_orders
+
+from service_rules import DEV_MODE_ENABLED
+
+from models import DeliveryInformation
 
 
 @asynccontextmanager
@@ -34,13 +38,17 @@ async def lifespan(app: FastAPI):
     # Disconnect from Atlas at application shutdown
     app.mongodb_client.close()
 
-# TODO: disable docs, redoc, openapi in production
-app = FastAPI(
-    lifespan=lifespan,
-    # docs_url=None,     # Disable /docs
-    # redoc_url=None,    # Disable /redoc
-    # openapi_url=None   # Disable /openapi.json
-) 
+if DEV_MODE_ENABLED:
+    app = FastAPI(
+        lifespan=lifespan,
+    ) 
+else:
+    app = FastAPI(
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,19 +59,6 @@ app.add_middleware(
 )
 
 # Endpoints
-
-# @app.get("/", response_class=JSONResponse)
-# async def root(request: Request):
-#     """
-#     Root endpoint.
-
-#     Args:
-#         request (Request): The incoming request object.
-
-#     Returns:
-#         JSONResponse: A JSON response containing a warning message.
-#     """
-#     return JSONResponse(status_code=status.HTTP_200_OK, content={"WARNING": f"We know who you are. Your IP address is {get_client_ip(request)}. Your name is Daniils. We will find you and you will be sorry for visiting this webpage!"})
 
 @app.get("/", response_class=JSONResponse)
 async def root(request: Request):
@@ -76,7 +71,10 @@ async def root(request: Request):
     Returns:
         RedirectResponse: A redirect response to the API documentation.
     """
-    return RedirectResponse(url="/docs")
+    if DEV_MODE_ENABLED:
+        return RedirectResponse(url="/docs")
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Welcome to Pourpal API!"})
 
 # Items
 @app.get("/items", response_class=JSONResponse)
@@ -948,7 +946,7 @@ async def api_delete_cart_item(request: Request, item_id: str = Path(..., title=
 
 # Orders
 @app.post("/orders", response_class=JSONResponse)
-async def api_create_order(request: Request, delivery_info: object, authorization: str = Header(None)):
+async def api_create_order(request: Request, delivery_info: DeliveryInformation = Body(...), authorization: str = Header(None)):
     """
     Create a new order from the current cart. Requires authentication.
 

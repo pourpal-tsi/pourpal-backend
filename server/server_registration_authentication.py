@@ -8,8 +8,6 @@ from models import UserAdmin, UserCustomer, UserAuthorization
 
 from service_funcs import bson_to_json, generate_random_password, encode_token, decode_token, send_emails, password_is_correct, is_user_admin
 
-from service_rules import DEV_MODE_ENABLED
-
 
 async def login(request: Request, user_data: dict):
     # Check if email and password are provided
@@ -61,15 +59,14 @@ async def register_admin(request: Request, user_data: dict, authorization: str =
     user = UserAdmin(email=user_data['email'], password=password)
     result = await request.app.mongodb['users'].insert_one(user.model_dump())
     if result.inserted_id:
-        if not DEV_MODE_ENABLED:
-            # Send email to the new admin user
-            subject = "Admin Registration Successful"
-            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as an administrator of the PourPal platform.
-                        <br>Your password is: <b>{password}</b><br><small style="color: gray;">Please change your password after logging in.</small><br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
-            try:
-                await send_emails([user.email], subject, html=message)
-            except Exception as e:
-                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
+        # Send email to the new admin user
+        subject = "Admin Registration Successful"
+        message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as an administrator of the PourPal platform.
+                    <br>Your password is: <b>{password}</b><br><small style="color: gray;">Please change your password after logging in.</small><br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
+        try:
+            await send_emails([user.email], subject, html=message)
+        except Exception as e:
+            return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
         return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Admin registered successfully", "user_id": user.user_id})
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register admin"})
 
@@ -87,15 +84,14 @@ async def register_customer(request: Request, user_data: dict):
     user = UserCustomer(email=user_data['email'], password=user_data['password'])
     result = await request.app.mongodb['users'].insert_one(user.model_dump())
     if result.inserted_id:
-        if not DEV_MODE_ENABLED:
-            # Send email to the new customer user
-            subject = "Customer Registration Successful"
-            message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as a customer of the PourPal platform.
-                        <br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
-            try:
-                await send_emails([user.email], subject, html=message)
-            except Exception as e:
-                return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
+        # Send email to the new customer user
+        subject = "Customer Registration Successful"
+        message = f'''Dear <i>{user.email}</i>,<br><br>You have been registered as a customer of the PourPal platform.
+                    <br><br>Best regards,<br>The PourPal Team<br><a href="https://pourpal.site/">www.pourpal.site</a>'''
+        try:
+            await send_emails([user.email], subject, html=message)
+        except Exception as e:
+            return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": f"Failed to send email: {e}"})
         return JSONResponse(status_code=status.HTTP_201_CREATED, content={"message": "Customer registered successfully", "user_id": user.user_id})
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"message": "Failed to register customer"})
 

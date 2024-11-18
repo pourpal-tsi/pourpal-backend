@@ -1,0 +1,16 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.7, pytest-8.3.3, pluggy-1.5.0 -- d:\TSI\4_course\Group Project\pourpal-backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\TSI\4_course\Group Project\pourpal-backend
+configfile: pytest.ini
+plugins: anyio-4.4.0, asyncio-0.24.0, cov-6.0.0
+asyncio: mode=Mode.AUTO, default_loop_scope=None
+collecting ... collected 5 items
+
+tests/test_cart.py::test_get_cart PASSED
+tests/test_cart.py::test_increment_cart_item PASSED
+tests/test_cart.py::test_decrement_cart_item PASSED
+tests/test_cart.py::test_update_cart_item PASSED
+tests/test_cart.py::test_delete_cart_item PASSED
+
+============================== 5 passed in 0.62s ==============================

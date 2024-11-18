@@ -13,3 +13,9 @@ pymongo
 # Parsing
 httpx
 bs4
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+mongomock-motor
