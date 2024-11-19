@@ -79,7 +79,7 @@ The backend service for PourPal, a beverage e-commerce platform developed as a s
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/pourpal-backend.git
+git clone https://github.com/pourpal-tsi/pourpal-backend.git
 cd pourpal-backend
 ```
 
