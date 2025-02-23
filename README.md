@@ -79,7 +79,7 @@ The backend service for PourPal, a beverage e-commerce platform developed as a s
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/pourpal-backend.git
+git clone https://github.com/pourpal-tsi/pourpal-backend.git
 cd pourpal-backend
 ```
 
@@ -110,3 +110,4 @@ uvicorn main:app --reload
 When running in development mode, API documentation is available at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
+
