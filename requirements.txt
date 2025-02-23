@@ -19,3 +19,6 @@ pytest
 pytest-asyncio
 pytest-cov
 mongomock-motor
+
+# Monitoring
+opencensus-ext-azure

@@ -7,3 +7,5 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 3  # 60 minutes * 24 hours * 3 days 
 
 GOOGLE_MAIL_APP_EMAIL = "gramattikutta@gmail.com"
 GOOGLE_MAIL_APP_PASSWORD = "dcww bssc iaxh njjl"
+
+AZURE_APP_INSIGHTS_INSTRUMENTATION_KEY = "364034d5-00f9-4afb-9a67-21f29b92e052"

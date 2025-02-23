@@ -5,7 +5,7 @@ from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import Decimal128
 from contextlib import asynccontextmanager
-from config import MONGO_DB
+from config import MONGO_DB, AZURE_APP_INSIGHTS_INSTRUMENTATION_KEY
 
 import uvicorn
 from bson import ObjectId
@@ -15,6 +15,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+
+from opencensus.ext.azure.log_exporter import AzureLogHandler
+import logging
 
 from server.server_items import get_items, get_item, create_item, update_item, delete_item
 from server.server_countries import get_item_countries
@@ -28,6 +31,20 @@ from service_rules import DEV_MODE_ENABLED
 
 from models import DeliveryInformation
 
+# Add the logger configuration here
+logger = logging.getLogger(__name__)
+logger.addHandler(AzureLogHandler(
+    connection_string=f'InstrumentationKey={AZURE_APP_INSIGHTS_INSTRUMENTATION_KEY}'
+))
+logger.setLevel(logging.INFO)
+
+# Configure FastAPI logging to use the same logger
+logging.getLogger("fastapi").handlers = logger.handlers
+logging.getLogger("uvicorn").handlers = logger.handlers
+
+# Set log levels
+logging.getLogger("fastapi").setLevel(logging.INFO)
+logging.getLogger("uvicorn").setLevel(logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
